@@ -1,0 +1,207 @@
+package com.operatorsJSON.beans.testsRelated;
+
+import com.operatorsJSON.SetValues;
+import com.operatorsJSON.beans.Constants;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
+@Component
+public class CreditRequest implements SetValues {
+    private long operatorId;
+    private String uid;
+    private String transactionId;
+    private int gameId;
+    private String token;
+    private BigDecimal creditAmount; // unique
+    private int betTypeID;
+    private int serverId;
+    private long roundId;
+    private String currency;
+    private String seatId;
+    private int platformId;
+    private long tableId;
+
+    private int returnReason=0; // unique
+    private String creditIndex="1|1"; // unique
+    public boolean isEndRound=true; // unique
+    private String gameDataString=""; //unique
+    private String debitTransactionId; // unique
+
+    private long timestamp;
+
+    @Autowired
+    RequestCommon requestCommon;
+
+    public long getOperatorId() {
+        return operatorId;
+    }
+
+    public void setOperatorId(long operatorId) {
+        this.operatorId = operatorId;
+    }
+
+    public String getUid() {
+        return uid;
+    }
+
+    public void setUid(String uid) {
+        this.uid = uid;
+    }
+
+    public String getTransactionId() {
+        return transactionId;
+    }
+
+    public void setTransactionId(String transactionId) {
+        this.transactionId = transactionId;
+    }
+
+    public int getGameId() {
+        return gameId;
+    }
+
+    public void setGameId(int gameId) {
+        this.gameId = gameId;
+    }
+
+    public String getToken() {
+        return token;
+    }
+
+    public void setToken(String token) {
+        this.token = token;
+    }
+
+    public BigDecimal getCreditAmount() {
+        return creditAmount;
+    }
+
+    public void setCreditAmount(BigDecimal creditAmount) {
+        this.creditAmount = creditAmount.setScale(2, RoundingMode.HALF_DOWN);
+    }
+
+    public int getBetTypeID() {
+        return betTypeID;
+    }
+
+    public void setBetTypeID(int betTypeID) {
+        this.betTypeID = betTypeID;
+    }
+
+    public int getServerId() {
+        return serverId;
+    }
+
+    public void setServerId(int serverId) {
+        this.serverId = serverId;
+    }
+
+    public long getRoundId() {
+        return roundId;
+    }
+
+    public void setRoundId(long roundId) {
+        this.roundId = roundId;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String currency) {
+        this.currency = currency;
+    }
+
+    public String getSeatId() {
+        return seatId;
+    }
+
+    public void setSeatId(String seatId) {
+        this.seatId = seatId;
+    }
+
+    public int getPlatformId() {
+        return platformId;
+    }
+
+    public void setPlatformId(int platformId) {
+        this.platformId = platformId;
+    }
+
+    public long getTableId() {
+        return tableId;
+    }
+
+    public void setTableId(long tableId) {
+        this.tableId = tableId;
+    }
+
+    public int getReturnReason() {
+        return returnReason;
+    }
+
+    public void setReturnReason(int returnReason) {
+        this.returnReason = returnReason;
+    }
+
+    public String getCreditIndex() {
+        return creditIndex;
+    }
+
+    public void setCreditIndex(String creditIndex) {
+        this.creditIndex = creditIndex;
+    }
+
+
+
+//	public boolean isEndRound() {
+//		return isEndRound;
+//	}
+//
+//	public void setIsEndRound(boolean isEndRound) {
+//		this.isEndRound = isEndRound;
+//	}
+
+    public String getDebitTransactionId() {
+        return debitTransactionId;
+    }
+
+    public void setDebitTransactionId(String debitTransactionId) {
+        this.debitTransactionId = debitTransactionId;
+    }
+
+    public long getTimestamp() {
+        return timestamp;
+    }
+
+    public void setTimestamp(long timestamp) {
+        this.timestamp = timestamp;
+    }
+
+    public String getGameDataString() {
+        return gameDataString;
+    }
+
+    public void setGameDataString(String gameDataString) {
+        this.gameDataString = gameDataString;
+    }
+
+    @Override
+    public void setValues() {
+        setOperatorId(requestCommon.getOperatorId());
+        setUid(requestCommon.getUid());
+        setToken(requestCommon.getToken());
+        setBetTypeID(requestCommon.getBetTypeID()+100);
+        setRoundId(requestCommon.getRoundId());
+        setCurrency(requestCommon.getCurrency());
+        setSeatId(requestCommon.getSeatId());
+        setPlatformId(requestCommon.getPlatformId());
+        setServerId(requestCommon.getServerId());
+        setGameId(requestCommon.getGameId());
+        setTableId(requestCommon.getTableId());
+
+    }
+}

@@ -2,10 +2,17 @@ package com.operatorsJSON.rest.dbRelated;
 
 import com.operatorsJSON.DAO.dbRelated.LoginDAO;
 import com.operatorsJSON.DAO.dbRelated.OperatorDAO;
+import com.operatorsJSON.PrepareResult;
 import com.operatorsJSON.beans.dbRelated.Login;
 import com.operatorsJSON.beans.dbRelated.Operator;
+import com.operatorsJSON.retrofit.ResponseServiceClient;
 import org.apache.tomcat.util.codec.binary.Base64;
+import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.Cache;
+import org.springframework.cache.annotation.CachePut;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -33,6 +40,9 @@ public class LoginController {
     OperatorDAO operatorDAO;
     @Autowired
     HttpServletRequest servletRequest;
+    @Autowired
+    ResponseServiceClient responseServiceClient;
+
 
     @PostConstruct
     public void createDefaultLogin() throws NoSuchAlgorithmException, InvalidKeyException {
@@ -48,12 +58,7 @@ public class LoginController {
 
     @GetMapping("/login")
     public ResponseEntity<?> login() throws NoSuchAlgorithmException, InvalidKeyException {
-//        try {
-//            TimeUnit.SECONDS.sleep(5);
-//        } catch (InterruptedException e) {
-//            // TODO Auto-generated catch block
-//            e.printStackTrace();
-//        }
+
         String userNameToCheck = servletRequest.getHeader("userName");
         String passwordToCheck = servletRequest.getHeader("password");
         Optional<Login> login = loginDAO.findLoginByUserName(userNameToCheck);
@@ -80,6 +85,34 @@ public class LoginController {
                 return new ResponseEntity<>(HttpStatus.OK);
             } else {
                 return new ResponseEntity<String>("User " + login.getUserName() + " already exists", HttpStatus.IM_USED);
+            }
+        } else {
+            return new ResponseEntity<String>("Forbidden!", HttpStatus.FORBIDDEN);
+        }
+    }
+
+    @PostMapping("/createaskam")
+    public ResponseEntity<?> createLoginAsKAM(@RequestBody Operator operator) throws NoSuchAlgorithmException, InvalidKeyException {
+        String userName = servletRequest.getHeader("userName");
+        String password = servletRequest.getHeader("password");
+        JSONObject login = new JSONObject(servletRequest.getHeader("login"));
+        if (actionAllowed(userName, password)) {
+            Optional<Login> loginToCheck = loginDAO.findLoginByUserName(String.valueOf(login.get("userName")));
+            Optional<Operator> operatorToCheck = operatorDAO.findOperatorByOperatorId(operator.getOperatorId());
+            if (loginToCheck.isPresent() || operatorToCheck.isPresent()) {
+                return new ResponseEntity<String>("Already exists", HttpStatus.IM_USED);
+            } else {
+                Login loginToCreate = new Login();
+                loginToCreate.setUserName(String.valueOf(login.get("userName")));
+                loginToCreate.setPassword(encode(String.valueOf(login.get("password"))));
+                loginDAO.addLogin(loginToCreate);
+                Optional<Login> newLogin = loginDAO.findLoginByUserName(String.valueOf(login.get("userName")));
+                operator.setAddedTo(newLogin.get().getId());
+                operatorDAO.addOperator(operator);
+                List<Operator> tmp = newLogin.get().getOperators();
+                tmp.add(operator);
+                loginDAO.addLogin(newLogin.get());
+                return new ResponseEntity<>(HttpStatus.OK);
             }
         } else {
             return new ResponseEntity<String>("Forbidden!", HttpStatus.FORBIDDEN);
@@ -211,14 +244,10 @@ public class LoginController {
                     loginsToSend.add(login);
                 } else if (accessLevel == 2 && login.getAccessLevel() < 2) {
                     loginsToSend.add(login);
+                } else if (accessLevel == 1 && login.getAccessLevel() == 0) {
+                    loginsToSend.add(login);
                 }
             }
-//            try {
-//                TimeUnit.SECONDS.sleep(5);
-//            } catch (InterruptedException e) {
-//                // TODO Auto-generated catch block
-//                e.printStackTrace();
-//            }
             loginsToSend.sort(Comparator.comparing(Login::getUserName));
             return new ResponseEntity<ArrayList<Login>>((ArrayList<Login>) loginsToSend, HttpStatus.OK);
         } else {
@@ -261,13 +290,18 @@ public class LoginController {
         long loginId = Long.parseLong(servletRequest.getHeader("id"));
         String newName = servletRequest.getHeader("newName");
         if (actionAllowed(userName, password)) {
-            Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
-            if (loginToCheck.isPresent()) {
-                loginToCheck.get().setUserName(newName);
-                loginDAO.addLogin(loginToCheck.get());
-                return new ResponseEntity<>(HttpStatus.OK);
+            Optional<Login> loginWithNewName = loginDAO.findLoginByUserName(newName);
+            if (!loginWithNewName.isPresent()) {
+                Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
+                if (loginToCheck.isPresent()) {
+                    loginToCheck.get().setUserName(newName);
+                    loginDAO.addLogin(loginToCheck.get());
+                    return new ResponseEntity<>(HttpStatus.OK);
+                } else {
+                    return new ResponseEntity<String>("Not found", HttpStatus.NOT_FOUND);
+                }
             } else {
-                return new ResponseEntity<String>("Not found", HttpStatus.NOT_FOUND);
+                return new ResponseEntity<String>("Name already exists", HttpStatus.IM_USED);
             }
         } else {
             return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
@@ -363,6 +397,39 @@ public class LoginController {
         }
     }
 
+    @GetMapping("/ipcheck")
+    public ResponseEntity<?> ipCheck() {
+        JSONObject res = new JSONObject(responseServiceClient.getResponse("https://ip-checker2000.herokuapp.com/request/send/"));
+        return new ResponseEntity<String>(String.valueOf(res.get("remoteAddress")), HttpStatus.OK);
+    }
+
+    //    @PostMapping("/cachecheck")
+//    public void check(@RequestBody String objectString) {
+//        System.out.println(objectString);
+//        JSONObject object = new JSONObject(objectString);
+//        ConcurrentMapCacheManager cacheManager = new ConcurrentMapCacheManager();
+//        getNumber(object);
+//        JSONObject jsonObject = new JSONObject(cacheManager.getCache("objects"));
+//        System.out.println(jsonObject);
+//       System.out.println(cacheManager.getCache("objects").get("number"));
+//    }
+//
+//    @CachePut(value = "objects", key = "number")
+//    public int getNumber(JSONObject object) {
+//        System.out.println(1);
+//        System.out.println(object.get("number"));
+//        return object.getInt("number");
+//    }
+//    @PostMapping("/test")
+//    public boolean test(@RequestBody String objectString) {
+//        JSONObject object = new JSONObject(objectString);
+//        return PrepareResult.correctCurrencyFormat(String.valueOf(object.get("key")));
+//        JSONObject object = new JSONObject(objectString);
+//        System.out.println(object.get("key") instanceof Double);
+//        System.out.println(String.valueOf(object.get("key").getClass()));
+//    }
+
+
     private static String encode(String password) throws NoSuchAlgorithmException, InvalidKeyException {
 
         Mac sha256_HMAC = Mac.getInstance("HmacSHA256");
@@ -373,13 +440,11 @@ public class LoginController {
 
     private boolean actionAllowed(String userName, String password) {
         Optional<Login> loginToCheck = loginDAO.findLoginByUserName(userName);
-        if (loginToCheck.isPresent()) {
-            return loginToCheck.get().getPassword().equals(password);
-        }
-        return false;
+        return loginToCheck.map(value -> value.getPassword().equals(password)).orElse(false);
     }
 
     private static long timestampToTTL(long timestamp) {
         return (System.currentTimeMillis() - timestamp) / 1000 / 60 / 60 / 24;
     }
+
 }

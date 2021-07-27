@@ -2,8 +2,10 @@ package com.operatorsJSON.rest.dbRelated;
 
 import com.operatorsJSON.DAO.dbRelated.LoginDAO;
 import com.operatorsJSON.DAO.dbRelated.OperatorDAO;
+import com.operatorsJSON.DAO.dbRelated.OperatorsDynamicConfigDAO;
 import com.operatorsJSON.beans.dbRelated.Login;
 import com.operatorsJSON.beans.dbRelated.Operator;
+import com.operatorsJSON.beans.dbRelated.OperatorsDynamicConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -28,6 +30,8 @@ public class OperatorController {
     @Autowired
     LoginDAO loginDAO;
     @Autowired
+    OperatorsDynamicConfigDAO dynamicConfigDAO;
+    @Autowired
     HttpServletRequest servletRequest;
 
 
@@ -40,6 +44,10 @@ public class OperatorController {
             if (operatorToCheck.isPresent()) {
                 return new ResponseEntity<String>("Operator ID " + operator.getOperatorId() + " already exists.", HttpStatus.IM_USED);
             } else {
+                OperatorsDynamicConfig dynamicConfig = new OperatorsDynamicConfig();
+                dynamicConfig.setBelongsToOperator(operator.getOperatorId());
+                dynamicConfigDAO.addDynamicConfig(dynamicConfig);
+                operator.setRelatedConfig(dynamicConfig);
                 operatorDAO.addOperator(operator);
                 return new ResponseEntity<>(HttpStatus.OK);
             }

@@ -1,13 +1,10 @@
 package com.operatorsJSON.beans.dbRelated;
 
 import org.springframework.context.annotation.Scope;
-
 import org.springframework.stereotype.Component;
 
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.Id;
-import javax.persistence.Table;
+import javax.persistence.*;
+import java.util.HashSet;
 
 @Entity
 @Table(name = "OperatorsPermanentData")
@@ -23,12 +20,15 @@ public class Operator {
     private String debitMethodName;
     private String rollbackMethodName;
     private String hashKey;
+    private HashSet<String> usedTokens;
     private long addedTo = -1;
+    private OperatorsDynamicConfig relatedConfig;
 
     public Operator() {
     }
 
-    public Operator(long operatorId, String operatorName, String operatorUrl, String contextRootName, String authMethodName, String creditMethodName, String debitMethodName, String rollbackMethodName, String hashKey, long addedTo) {
+    public Operator(long operatorId, String operatorName, String operatorUrl, String contextRootName, String authMethodName,
+                    String creditMethodName, String debitMethodName, String rollbackMethodName, String hashKey, HashSet<String> usedTokens, long addedTo, OperatorsDynamicConfig relatedConfig) {
         this.operatorId = operatorId;
         this.operatorName = operatorName;
         this.operatorUrl = operatorUrl;
@@ -38,7 +38,9 @@ public class Operator {
         this.debitMethodName = debitMethodName;
         this.rollbackMethodName = rollbackMethodName;
         this.hashKey = hashKey;
+        this.usedTokens = usedTokens;
         this.addedTo = addedTo;
+        this.relatedConfig = relatedConfig;
     }
 
     @Id
@@ -132,6 +134,23 @@ public class Operator {
         this.addedTo = addedTo;
     }
 
+    @OneToOne(cascade = CascadeType.REMOVE)
+    public OperatorsDynamicConfig getRelatedConfig() {
+        return relatedConfig;
+    }
+
+    public void setRelatedConfig(OperatorsDynamicConfig relatedConfig) {
+        this.relatedConfig = relatedConfig;
+    }
+
+    public HashSet<String> getUsedTokens() {
+        return usedTokens;
+    }
+
+    public void setUsedTokens(HashSet<String> usedTokens) {
+        this.usedTokens = usedTokens;
+    }
+
     @Override
     public String toString() {
         return "Operator{" +
@@ -144,7 +163,9 @@ public class Operator {
                 ", debitMethodName='" + debitMethodName + '\'' +
                 ", rollbackMethodName='" + rollbackMethodName + '\'' +
                 ", hashKey='" + hashKey + '\'' +
+                ", usedTokens=" + usedTokens +
                 ", addedTo=" + addedTo +
+                ", relatedConfig=" + relatedConfig +
                 '}';
     }
 }
