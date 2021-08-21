@@ -421,9 +421,9 @@ public class LoginController {
 //        return object.getInt("number");
 //    }
 //    @PostMapping("/test")
-//    public boolean test(@RequestBody String objectString) {
+//    public void test(@RequestBody String objectString) {
 //        JSONObject object = new JSONObject(objectString);
-//        return PrepareResult.correctCurrencyFormat(String.valueOf(object.get("key")));
+//        return PrepareResult.defineObjectType(object.get("key"));
 //        JSONObject object = new JSONObject(objectString);
 //        System.out.println(object.get("key") instanceof Double);
 //        System.out.println(String.valueOf(object.get("key").getClass()));

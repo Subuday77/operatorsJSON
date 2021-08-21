@@ -1,5 +1,7 @@
 package com.operatorsJSON.beans.testsRelated;
 
+import com.operatorsJSON.DAO.dbRelated.OperatorsDynamicConfigDAO;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -18,8 +20,11 @@ public class RequestCommon {
     private long tableId = 1;
     private long timestamp;
 
+    @Autowired
+    OperatorsDynamicConfigDAO dynamicConfigDAO;
+
     public RequestCommon() {
-        // TODO Auto-generated constructor stub
+
     }
 
     public RequestCommon(long operatorId, String uid, String transactionId, int gameId, String token, int betTypeID,
@@ -143,6 +148,8 @@ public class RequestCommon {
         this.timestamp = timestamp;
     }
 
+
+
     @Override
     public String toString() {
         return "RequestCommon [operatorId=" + operatorId + ", uid=" + uid + ", transactionId=" + transactionId
@@ -151,4 +158,12 @@ public class RequestCommon {
                 + platformId + ", tableId=" + tableId + ", timestamp=" + timestamp + "]";
     }
 
+
+    public void setValues(long operatorId) {
+        setOperatorId(operatorId);
+        setToken(dynamicConfigDAO.findDynamicCondigById(operatorId).get().getSessionToken());
+        setUid(dynamicConfigDAO.findDynamicCondigById(operatorId).get().getUid());
+        setRoundId((int) (Math.random() * (999999 - 100000 + 1)) + 100000);
+        setCurrency(dynamicConfigDAO.findDynamicCondigById(operatorId).get().getCurrency());
+    }
 }

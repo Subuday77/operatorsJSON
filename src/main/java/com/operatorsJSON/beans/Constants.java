@@ -5,10 +5,12 @@ import org.springframework.stereotype.Component;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Component
 public class Constants {
+    public static Map<Long, LinkedHashMap<String, double[]>> CACHE = new LinkedHashMap<>();
     public static final String HASHKEY = "cff44c52-d40e-46a4-acce-f6af7491529b";
     public static final String[] DEFAULTPASSWORDS = {"CgfyYLXu6sNF24nG", "vLBuNg5Sz7MAYCa9", "4pgbXMYLyRTE92NG", "sZqHkmLeNX64uhtV",
             "nLbvDKEyY5MuQCAq", "v2nW7EwDZ8hRPxLF", "74bMvw6NQfyV5jgY", "X4hMaJZUk3mnQy8H", "SZp5tC7fAgqUQYyj", "RDkKYfupZ97dVLhU",
@@ -48,49 +50,12 @@ public class Constants {
             "bexmrNU4SgEjJRLv", "r4uBUea28WPG5kgz", "EmcxRHhM7yLQA8st", "59qXK7crTDvGVBps", "zuTsygDd8FU2WNLE", "2vV4sMkWwCgzGdBF", "hcrPzL6QbskBDGNY",
             "5FY3LaNej4SXmhZd", "KenPVxBzN3SZCG6W", "NZbk2XRHawfEgVvK", "5gHFtnMwXJNedR4v", "brD7RBgCHMnELc5A", "5bsChcZAaTPq8Rx6"
     };
-//    public static HashMap<String, String> EXPECTEDRESPONSES = (HashMap<String, String>) Map.of(
-//            "Case_0", "\"{\n" +
-//                    "  \"\"operatorId\"\" : 13000000,\n" +
-//                    "  \"\"uid\"\" : \"\"57137\"\",\n" +
-//                    "  \"\"nickName\"\" : \"\"Martin Luther King\"\",\n" +
-//                    "  \"\"playerTokenAtLaunch\"\" : \"\"sfsdfsdfsdf\"\",\n" +
-//                    "  \"\"token\"\" : \"\"a1c1f9c192a79b10f0e7bca36af59ba9\"\",\n" +
-//                    "  \"\"balance\"\" : 1000.0,\n" +
-//                    "  \"\"currency\"\" : \"\"USD\"\",\n" +
-//                    "  \"\"language\"\" : \"\"en\"\",\n" +
-//                    "  \"\"date\"\" : \"\"2020-05-03 08:18:11.231288\"\",\n" +
-//                    "  \"\"clientIP\"\" : \"\"127.0.0.1\"\",\n" +
-//                    "  \"\"errorCode\"\" : 0,\n" +
-//                    "  \"\"errorDescription\"\" : \"\"ok\"\",\n" +
-//                    "  \"\"timestamp\"\" : 1588493891231,\n" +
-//                    "  \"\"vip\"\" : \"\"3\"\"\n" +
-//                    "}\"\n",
-//            "Case_1", "\"{\n" +
-//                    "\"\"operatorId\"\" : 13000000,\n" +
-//                    "  \"\"balance\"\" : 0.0,\n" +
-//                    "  \"\"errorCode\"\" : 6,\n" +
-//                    "  \"\"errorDescription\"\" : \"\"Token not found.\"\",\n" +
-//                    "  \"\"timestamp\"\" : 1588518141005\n" +
-//                    "}\"\n",
-//            "All_Cases", "\"{\n" +
-//                    "  \"\"operatorId\"\" : 13000000,\n" +
-//                    "  \"\"roundId\"\" : 45354,\n" +
-//                    "  \"\"uid\"\" : \"\"57137\"\",\n" +
-//                    "  \"\"nickName\"\" : \"\"Martin Luther King\"\",\n" +
-//                    "  \"\"token\"\" : \"\"a1c1f9c192a79b10f0e7bca36af59ba9\"\",\n" +
-//                    "  \"\"balance\"\" : 999.0,\n" +
-//                    "  \"\"transactionId\"\" : \"\"030fb5c8-b718-405f-88a9-28889eed46af\"\",\n" +
-//                    "  \"\"currency\"\" : \"\"USD\"\",\n" +
-//                    "  \"\"bonusAmount\"\" : 0.0,\n" +
-//                    "  \"\"errorCode\"\" : 0,\n" +
-//                    "  \"\"errorDescription\"\" : \"\"OK\"\",\n" +
-//                    "  \"\"timestamp\"\" : 1588493901716\n" +
-//                    "}\"\n");
-
     public static final String[] successfulAuthMandatoryKeys = {"operatorId", "uid", "token", "balance", "currency", "errorCode", "errorDescription", "timestamp"};
     public static final String[] unsuccessfulAuthMandatoryKeys = {"operatorId", "errorCode", "errorDescription", "timestamp"};
     public static final String[] mandatoryKeys = {"operatorId", "roundId", "uid", "token", "balance", "transactionId", "currency", "errorCode", "errorDescription", "timestamp"};
     public static final String[] optionalKeys = {"nickName", "playerTokenAtLaunch", "clientIP", "VIP", "bonusAmount"};
+    public static final String[] allKeys = {"operatorId", "uid", "token", "balance", "currency", "errorCode", "errorDescription",
+            "timestamp", "roundId", "transactionId", "nickName", "playerTokenAtLaunch", "clientIP", "VIP", "bonusAmount"};
 
     public static String formatMyDouble(double num) {
         DecimalFormat decimalFormat = new DecimalFormat("#.00");

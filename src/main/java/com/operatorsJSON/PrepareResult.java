@@ -3,18 +3,16 @@ package com.operatorsJSON;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
+import com.google.gson.Gson;
 import com.operatorsJSON.DAO.dbRelated.OperatorDAO;
 import com.operatorsJSON.DAO.dbRelated.OperatorsDynamicConfigDAO;
 import com.operatorsJSON.beans.dbRelated.Operator;
 import com.operatorsJSON.beans.dbRelated.OperatorsDynamicConfig;
-import com.operatorsJSON.beans.testsRelated.AuthenticationRequest;
-import com.operatorsJSON.beans.testsRelated.OperatorResponse;
-import com.operatorsJSON.beans.testsRelated.ParameterProperties;
-import com.operatorsJSON.beans.testsRelated.ResultToSend;
-import com.operatorsJSON.rest.testsRelated.TestsController;
+import com.operatorsJSON.beans.testsRelated.*;
 import com.operatorsJSON.retrofit.ResponseServiceClient;
 import org.apache.http.conn.util.InetAddressUtils;
 import org.apache.tomcat.util.codec.binary.Base64;
+import org.json.JSONException;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -23,8 +21,13 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
 
 import static com.operatorsJSON.beans.Constants.*;
@@ -38,14 +41,23 @@ public class PrepareResult {
     @Autowired
     AuthenticationRequest authenticationRequest;
     @Autowired
+    RequestCommon requestCommon;
+    @Autowired
+    DebitRequest debitRequest;
+    @Autowired
+    CreditRequest creditRequest;
+    @Autowired
+    RollbackRequest rollbackRequest;
+    @Autowired
     ResultToSend resultToSend;
     @Autowired
     ResponseServiceClient serviceClient;
+    @Autowired
+    Logging logging;
 
+    Gson gson = new Gson();
     ObjectWriter ow = new ObjectMapper().writer();
     ObjectWriter owPretty = new ObjectMapper().writer().withDefaultPrettyPrinter();
-
-    private static HashMap<Long, LinkedHashMap<String, double[]>> cache;
 
 //    public static HashMap<Long, LinkedHashMap<String, double[]>> getCache() {
 //        return cache;
@@ -60,36 +72,139 @@ public class PrepareResult {
     // Expected calculated balance
     // Calculated balance
 
-    public ResponseEntity<?> authAttempt(long operatorId) throws JsonProcessingException {
+    public synchronized ResponseEntity<?> authAttempt(long operatorId) throws JsonProcessingException {
         Optional<Operator> operatorToTest = operatorDAO.findOperatorByOperatorId(operatorId);
         String baseUrl = operatorToTest.get().getOperatorUrl() + operatorToTest.get().getContextRootName();
+        ArrayList<String> cacheKeys = new ArrayList<>();
         authenticationRequest.setOperatorId(operatorId);
         authenticationRequest.setToken(dynamicConfigDAO.findDynamicCondigById(operatorId).get().getInitialToken());
         authenticationRequest.setTimestamp(System.currentTimeMillis());
+        resultToSend.setLog("");
+//        ResultToSend resultToSend = new ResultToSend();
+        logging.logParser("Case_0", String.valueOf(operatorId));
         resultToSend.setRequest(owPretty.writeValueAsString(authenticationRequest));
-        resultToSend.setResponse(owPretty.writeValueAsString(serviceClient.getResponse(baseUrl, operatorToTest.get().getAuthMethodName(), ow.writeValueAsString(authenticationRequest),
+        resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getAuthMethodName(), ow.writeValueAsString(authenticationRequest),
                 generateHash(ow.writeValueAsString(authenticationRequest), operatorToTest.get().getHashKey()))));
         int errorCode = setupDynamicConfig(resultToSend.getResponse(), operatorId);
         switch (errorCode) {
             case -1:
-                return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
+                return new ResponseEntity<>(HttpStatus.EXPECTATION_FAILED);
             case 6:
                 return new ResponseEntity<>(HttpStatus.LOCKED);
             case 0:
                 double[] balances = new double[4];
-                for (double balance : balances) {
-                    balance = getBalance(resultToSend.getResponse());
+                for (int i = 0; i < 4; i++) {
+                    balances[i] = getBalance(resultToSend.getResponse());
                 }
                 LinkedHashMap<String, double[]> caseBalances = new LinkedHashMap<>();
                 caseBalances.put("Case_0", balances);
-                cache.put(operatorId, caseBalances);
+                CACHE.put(operatorId, caseBalances);
+                if (CACHE.containsKey(operatorId)) {
+                    CACHE.replace(operatorId, caseBalances);
+                }
                 resultToSend.setExpectedResponse(String.valueOf(prepareExpectedResponse("Case_0", resultToSend.getRequest(), resultToSend.getResponse())));
-                resultToSend.setCheckResults(checkResults("Case_0", resultToSend.getRequest(), resultToSend.getResponse()));
+                resultToSend.setCheckResults(checkResults("Case_0", resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
                 return new ResponseEntity<ResultToSend>(resultToSend, HttpStatus.OK);
             default:
                 return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
 
+    }
+
+    public synchronized ResponseEntity<?> testFlow(long operatorId, ArrayList<String> casesList) throws IOException {
+        LinkedHashMap<String, ResultToSend> resultsToSend = new LinkedHashMap<>();
+        JSONObject responseJSON;
+        double returnedBalance;
+        double[] balances;
+        ResultToSend resultToSend;
+        ArrayList<String> cacheKeys = new ArrayList<>();
+        cacheKeys.add("Case_0");
+        Optional<Operator> operatorToTest = operatorDAO.findOperatorByOperatorId(operatorId);
+        String baseUrl = operatorToTest.get().getOperatorUrl() + operatorToTest.get().getContextRootName();
+        requestCommon.setValues(operatorId);
+        debitRequest.setValues();
+        creditRequest.setValues();
+        rollbackRequest.setValues();
+        for (String testCase : casesList) {
+            switch (testCase) {
+                case "Case_1": // Repeated authentication(1)
+                    authenticationRequest.setOperatorId(operatorId);
+                    authenticationRequest.setToken(dynamicConfigDAO.findDynamicCondigById(operatorId).get().getInitialToken());
+                    resultToSend = new ResultToSend();
+//                    resultToSend.setLog("");
+                    authenticationRequest.setTimestamp(System.currentTimeMillis());
+                    logging.logParser(testCase, String.valueOf(operatorId));
+                    resultToSend.setRequest(owPretty.writeValueAsString(authenticationRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getAuthMethodName(), ow.writeValueAsString(authenticationRequest),
+                            generateHash(ow.writeValueAsString(authenticationRequest), operatorToTest.get().getHashKey()))));
+//                    resultToSend.setLog(getLog("Case 1", operatorId));
+//                    logging.logParser("Case 1", String.valueOf(operatorId), resultToSend);
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = responseJSON.optDouble("balance", 0);
+                    balances = new double[4];
+                    balances[0] = returnedBalance;
+                    balances[1] = 0;
+                    balances[2] = CACHE.get(operatorId).get("Case_0")[2];
+                    balances[3] = CACHE.get(operatorId).get("Case_0")[3];
+                    CACHE.get(operatorId).put(testCase, balances);
+                    cacheKeys.add("Case_1");
+                    resultToSend.setExpectedResponse(String.valueOf(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse())));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_2": // Debit(2)
+                    resultToSend = new ResultToSend();
+//                    resultToSend.setLog("");
+                    logging.logParser(testCase, String.valueOf(operatorId));
+                    debitRequest.setDebitAmount(BigDecimal.valueOf(dynamicConfigDAO.findDynamicCondigById(operatorId).get().getBasicBetAmount()));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    balances = new double[4];
+                    balances[0] = returnedBalance;
+                    balances[1] = Double.parseDouble(formatMyDouble(dynamicConfigDAO.findDynamicCondigById(operatorId).get().getInitialBalance() - debitRequest.getDebitAmount().doubleValue()));
+                    balances[2] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[2] - debitRequest.getDebitAmount().doubleValue()));
+                    balances[3] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[2] - debitRequest.getDebitAmount().doubleValue()));
+                    CACHE.get(operatorId).put("Case_2", balances);
+                    cacheKeys.add("Case_2");
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse()));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_3":
+                    resultToSend = new ResultToSend();
+//                    resultToSend.setLog("");
+                    logging.logParser(testCase, String.valueOf(operatorId));
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    balances = new double[4];
+                    balances[0] = returnedBalance;
+                    balances[1] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0];
+                    balances[2] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0];
+                    balances[3] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0];
+                    CACHE.get(operatorId).put("Case_3", balances);
+                    cacheKeys.add("Case_3");
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse()));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+            }
+
+        }
+
+        CACHE.remove(operatorId);
+        return new ResponseEntity<LinkedHashMap<String, ResultToSend>>(resultsToSend, HttpStatus.OK);
     }
 
     private int setupDynamicConfig(String response, long id) {
@@ -107,73 +222,91 @@ public class PrepareResult {
         return errorCode;
     }
 
-    private HashMap<String, ParameterProperties> checkResults(String caseNumber, String request, String response) {
+    private HashMap<String, ParameterProperties> checkResults(String caseNumber, String request, String response, ArrayList<String> cacheKeys) {
         JSONObject responseJSON = new JSONObject(response);
         JSONObject requestJSON = new JSONObject(request);
-        ArrayList<String> responseKeys = (ArrayList<String>) responseJSON.keySet();
+        ArrayList<String> responseKeys = new ArrayList<String>(responseJSON.keySet());
         LinkedHashMap<String, Object> responseMapWithLowerCaseKeys = new LinkedHashMap<>();
         for (String responseKey : responseJSON.keySet()) {
             responseMapWithLowerCaseKeys.put(responseKey.toLowerCase(), responseJSON.get(responseKey));
         }
-        Map<String, ParameterProperties> results = new HashMap<>();
+        HashMap<String, ParameterProperties> results = new HashMap<>();
         switch (caseNumber) {
             case "Case_0":
-                for (String key : successfulAuthMandatoryKeys) {
-                    ArrayList<Integer> errorCodes = new ArrayList<>();
+                for (String key : allKeys) {
+                    HashSet<Integer> errorCodes = new HashSet<>();
                     if (compareKeysIgnoringCase(key, responseKeys)) {
                         if (!responseKeys.contains(key)) {
-                            errorCodes.add(102); // Key exists but with capitalisation errors
+                            if (Arrays.stream(successfulAuthMandatoryKeys).anyMatch(key::equalsIgnoreCase)) {
+                                errorCodes.add(102); // Key exists but with capitalisation errors
+                            } else {
+                                errorCodes.add(202); // Key exists but with capitalisation errors non mandatory
+                            }
                         }
                         switch (key.toLowerCase()) {
                             case "operatorid":
-                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key)).equals("Long")) {
+                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("Long")
+                                        && !defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("Integer")) {
                                     errorCodes.add(1030); // Invalid data format
                                 }
-                                if (!responseMapWithLowerCaseKeys.get(key).equals(requestJSON.getLong(key))) {
-                                    errorCodes.add(104); // Wrong value
+                                if (Long.parseLong(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != requestJSON.getLong(key)) {
+                                    errorCodes.add(1040); // Wrong value
+                                }
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(107); // Value is missing
                                 }
                                 break;
                             case "uid":
-                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key)).equals("String")) {
+                            case "errordescription":
+                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
                                     errorCodes.add(1030); // Invalid data format
                                 }
-//                                if(!responseMapWithLowerCaseKeys.get(key).equals
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(107); // Value is missing
+                                }
+//                                if(!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals
 //                                        (dynamicConfigDAO.findDynamicCondigById(requestJSON.getLong("operatorId")).get().getUid())) {
 //                                    errorCodes.add(104); // Wrong value
 //                                }
                                 break;
                             case "token":
-                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key)).equals("String")) {
+                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
                                     errorCodes.add(1030); // Invalid data format
                                 }
-                                if (tokenUsed(requestJSON, String.valueOf(responseMapWithLowerCaseKeys.get(key)))) {
+                                if (tokenUsed(requestJSON, String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())))) {
                                     errorCodes.add(105); // Token was already used once
+                                }
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(107); // Value is missing
                                 }
                                 break;
                             case "balance":
-                                String className = defineObjectType(responseMapWithLowerCaseKeys.get(key));
-                                switch (className) {
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(107); // Value is missing
+                                }
+                                String BalanceClassName = defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase()));
+                                switch (BalanceClassName) {
                                     case "Integer":
                                     case "Long":
                                         errorCodes.add(1031); // Invalid data format not critical
                                         break;
                                     case "String":
                                         try {
-                                            Double.parseDouble(String.valueOf(responseMapWithLowerCaseKeys.get(key)));
-                                            if (countDecimals(responseMapWithLowerCaseKeys.get(key)) <= 1) {
+                                            Double.parseDouble(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())));
+                                            if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) <= 1) {
                                                 errorCodes.add(1031); // Invalid data format not critical
-                                            } else if (countDecimals(responseMapWithLowerCaseKeys.get(key)) > 2) {
-                                                errorCodes.add(1032); // Invalid data format too much decimals
+                                            } else if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) > 2) {
+                                                errorCodes.add(1032); // Invalid data format too many decimals
                                             }
                                         } catch (Exception e) {
                                             errorCodes.add(1030); // Invalid data format
                                         }
                                         break;
                                     case "BigDecimal":
-                                        if (countDecimals(responseMapWithLowerCaseKeys.get(key)) <= 1) {
+                                        if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) <= 1) {
                                             errorCodes.add(1031); // Invalid data format not critical
-                                        } else if (countDecimals(responseMapWithLowerCaseKeys.get(key)) > 2) {
-                                            errorCodes.add(1032); // Invalid data format too much decimals
+                                        } else if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) > 2) {
+                                            errorCodes.add(1032); // Invalid data format too many decimals
                                         }
                                         break;
                                     default:
@@ -182,41 +315,682 @@ public class PrepareResult {
                                 }
                                 break;
                             case "currency":
-                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key)).equals("String")) {
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(107); // Value is missing
+                                }
+                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
                                     errorCodes.add(1030); // Invalid data format
-                                } else if (!correctCurrencyFormat(String.valueOf(responseMapWithLowerCaseKeys.get(key)))) {
+                                } else if (!correctCurrencyFormat(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())))) {
                                     errorCodes.add(1030); // Invalid data format
                                 }
                                 break;
-                            case "errorCode":
-
+                            case "errorcode":
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(107); // Value is missing
+                                }
+                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("Integer")) {
+                                    errorCodes.add(1030); // Invalid data format
+                                } else {
+                                    if (Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 0) {
+                                        errorCodes.add(106); // Invalid error code
+                                    }
+                                }
+                                break;
+                            case "timestamp":
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(107); // Value is missing
+                                }
+                                String TimestampClassName = defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase()));
+                                switch (TimestampClassName) {
+                                    case "Integer":
+                                        errorCodes.add(1031); // Invalid data format not critical
+                                        break;
+                                    case "String":
+                                        try {
+                                            Long.parseLong(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())));
+                                            if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() != 13) {
+                                                errorCodes.add(1031); // Invalid data format not critical
+                                            }
+                                        } catch (Exception e) {
+                                            errorCodes.add(1030); // Invalid data format
+                                        }
+                                        break;
+                                    case "BigDecimal":
+                                        errorCodes.add(1030); // Invalid data format
+                                        break;
+                                    default:
+                                        break;
+                                }
+                                break;
+                            case "nickname":
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(207); // Value is missing non mandatory
+                                }
+                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
+                                    errorCodes.add(2030); // Invalid data format non mandatory
+                                }
+                                break;
+                            case "playertokenatlaunch":
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(207); // Value is missing non mandatory
+                                }
+                                if (tokenUsed(requestJSON, String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())))) {
+                                    errorCodes.add(205); // Token was already used once
+                                }
+                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
+                                    errorCodes.add(2030); // Invalid data format non mandatory
+                                }
+                                if (responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals(responseMapWithLowerCaseKeys.get("token"))) {
+                                    errorCodes.add(2051); // Wrong value non mandatory Initial token same as session
+                                }
+                                if (!dynamicConfigDAO.findDynamicCondigById(responseJSON.getLong("operatorId")).get()
+                                        .getInitialToken().equals(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) {
+                                    errorCodes.add(2040); //Wrong value non mandatory
+                                }
+                                break;
+                            case "clientip":
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(207); // Value is missing non mandatory
+                                }
+                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
+                                    errorCodes.add(2030); // Invalid data format non mandatory
+                                }
+                                if (!checkValidIp(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())))) {
+                                    errorCodes.add(2030); // Invalid data format non mandatory
+                                }
+                                break;
+                            case "vip":
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(207); // Value is missing non mandatory
+                                }
+                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
+                                    errorCodes.add(2030); // Invalid data format non mandatory
+                                }
+                                try {
+                                    int temp = Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())));
+                                    if (temp < 0 || temp > 10) {
+                                        errorCodes.add(2040); //Wrong value non mandatory
+                                    }
+                                } catch (Exception e) {
+                                    errorCodes.add(2030); // Invalid data format non mandatory
+                                }
+                                break;
+                            case "bonusamount":
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(207); // Value is missing non mandatory
+                                }
+                                String BonusAmountClassName = defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase()));
+                                switch (BonusAmountClassName) {
+                                    case "Integer":
+                                    case "Long":
+                                        errorCodes.add(2031); // Invalid data format not critical non mandatory
+                                        break;
+                                    case "String":
+                                        try {
+                                            Double.parseDouble(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())));
+                                            if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) <= 1) {
+                                                errorCodes.add(2031); // Invalid data format not critical non mandatory
+                                            } else if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) > 2) {
+                                                errorCodes.add(2032); // Invalid data format too many decimals non mandatory
+                                            }
+                                        } catch (Exception e) {
+                                            errorCodes.add(2030); // Invalid data format non mandatory
+                                        }
+                                        break;
+                                    case "BigDecimal":
+                                        if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) <= 1) {
+                                            errorCodes.add(2031); // Invalid data format not critical non mandatory
+                                        } else if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) > 2) {
+                                            errorCodes.add(2032); // Invalid data format too many decimals non mandatory
+                                        }
+                                        break;
+                                    default:
+                                        errorCodes.add(2030); // Invalid data format non mandatory
+                                        break;
+                                }
+                                break;
+                            default:
+                                break;
                         }
                     } else {
-                        errorCodes.add(101); //Key not exists
+                        if (Arrays.stream(successfulAuthMandatoryKeys).anyMatch(key::equalsIgnoreCase)) {
+                            errorCodes.add(101); //Key doesn't exist
+                        }
                     }
-                    if (errorCodes.size() == 0) {
-                        errorCodes.add(0);
+                    if (responseKeys.contains(key)) {
+                        if (errorCodes.size() == 0) {
+                            if (Arrays.stream(successfulAuthMandatoryKeys).anyMatch(key::equalsIgnoreCase)) {
+                                errorCodes.add(0);
+                            } else if (Arrays.stream(optionalKeys).anyMatch(key::equalsIgnoreCase)) {
+                                errorCodes.add(2);
+                            }
+                        }
                     }
-                    results.put(key, recordParameterProperties(key, errorCodes));
+                    if (errorCodes.size() > 0) {
+                        results.put(key, recordParameterProperties(key, responseJSON, errorCodes));
+                    }
                 }
+                return results;
+            case "Case_1":
+                for (String key : allKeys) {
+                    HashSet<Integer> errorCodes = new HashSet<>();
+                    if (compareKeysIgnoringCase(key, responseKeys)) {
+                        if (!responseKeys.contains(key)) {
+                            if (Arrays.stream(unsuccessfulAuthMandatoryKeys).anyMatch(key::equalsIgnoreCase)) {
+                                errorCodes.add(102); // Key exists but with capitalisation errors
+                            } else {
+                                errorCodes.add(3); // No need in this key here
+                            }
+                        }
+                        switch (key.toLowerCase()) {
+                            case "operatorid":
+                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("Long")
+                                        && !defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("Integer")) {
+                                    errorCodes.add(1030); // Invalid data format
+                                }
+                                if (Long.parseLong(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != requestJSON.getLong(key)) {
+                                    errorCodes.add(1040); // Wrong value
+                                }
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(107); // Value is missing
+                                }
+                                break;
+                            case "errorcode":
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(107); // Value is missing
+                                }
+                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("Integer")) {
+                                    errorCodes.add(1030); // Invalid data format
+                                } else {
+                                    if (Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 6) {
+                                        errorCodes.add(106); // Invalid error code
+                                    }
+                                }
+                                break;
+                            case "timestamp":
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(107); // Value is missing
+                                }
+                                String TimestampClassName = defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase()));
+                                switch (TimestampClassName) {
+                                    case "Integer":
+                                        errorCodes.add(1031); // Invalid data format not critical
+                                        break;
+                                    case "String":
+                                        try {
+                                            Long.parseLong(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())));
+                                            if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() != 13) {
+                                                errorCodes.add(1031); // Invalid data format not critical
+                                            }
+                                        } catch (Exception e) {
+                                            errorCodes.add(1030); // Invalid data format
+                                        }
+                                        break;
+                                    case "BigDecimal":
+                                        errorCodes.add(1030); // Invalid data format
+                                        break;
+                                    default:
+                                        break;
+
+                                }
+                                break;
+                            case "errordescription":
+                                if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
+                                    errorCodes.add(1030); // Invalid data format
+                                }
+                                if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                                    errorCodes.add(107); // Value is missing
+                                }
+                                if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("not found")) {
+                                    errorCodes.add(1041); // Possible wrong value;
+                                }
+                                break;
+                        }
+                    } else {
+                        if (Arrays.stream(unsuccessfulAuthMandatoryKeys).anyMatch(key::equalsIgnoreCase)) {
+                            errorCodes.add(101); //Key doesn't exist
+                        }
+                    }
+                    if (responseKeys.contains(key)) {
+                        if (errorCodes.size() == 0) {
+                            if (Arrays.stream(unsuccessfulAuthMandatoryKeys).anyMatch(key::equalsIgnoreCase)) {
+                                errorCodes.add(0);
+                            } else {
+                                errorCodes.add(3); // No need in this key here
+                            }
+                        }
+                    }
+                    if (errorCodes.size() > 0) {
+                        results.put(key, recordParameterProperties(key, responseJSON, errorCodes));
+                    }
+                }
+                return results;
+        }
+        for (String key : allKeys) {
+            HashSet<Integer> errorCodes = new HashSet<>();
+            if (compareKeysIgnoringCase(key, responseKeys)) {
+                if (!responseKeys.contains(key)) {
+                    if (Arrays.stream(mandatoryKeys).anyMatch(key::equalsIgnoreCase)) {
+                        errorCodes.add(102); // Key exists but with capitalisation errors
+                    } else {
+                        errorCodes.add(202); // Key exists but with capitalisation errors non mandatory
+                    }
+                }
+                switch (key.toLowerCase()) {
+                    case "operatorid":
+                        if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("Long")
+                                && !defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("Integer")) {
+                            errorCodes.add(1030); // Invalid data format
+                        }
+                        if (Long.parseLong(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != requestJSON.getLong(key)) {
+                            errorCodes.add(1040); // Wrong value
+                        }
+                        if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                            errorCodes.add(107); // Value is missing
+                        }
+                        break;
+                    case "transactionid":
+                        if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                            errorCodes.add(107); // Value is missing
+                        }
+                        if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
+                            errorCodes.add(1030); // Invalid data format
+                        }
+                        if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals(requestJSON.get("transactionId"))) {
+                            errorCodes.add(1040); // Wrong value
+                        }
+                        break;
+                    case "roundid":
+                        if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                            errorCodes.add(107); // Value is missing
+                        }
+                        if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("Integer")) {
+                            errorCodes.add(1030); // Invalid data format
+                        }
+                        if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals(requestJSON.get("roundId"))) {
+                            errorCodes.add(1040); // Wrong value
+                        }
+                        break;
+                    case "uid":
+                        if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
+                            errorCodes.add(1030); // Invalid data format
+                        }
+                        if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                            errorCodes.add(107); // Value is missing
+                        }
+                        if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals
+                                (dynamicConfigDAO.findDynamicCondigById(requestJSON.getLong("operatorId")).get().getUid())) {
+                            errorCodes.add(1040); // Wrong value
+                        }
+                        break;
+                    case "errordescription":
+                        if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
+                            errorCodes.add(1030); // Invalid data format
+                        }
+                        if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                            errorCodes.add(107); // Value is missing
+                        }
+                        break;
+                    case "token":
+                        if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals
+                                (dynamicConfigDAO.findDynamicCondigById(requestJSON.getLong("operatorId")).get().getSessionToken())) {
+                            errorCodes.add(1040); // Wrong value
+                        }
+                        if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
+                            errorCodes.add(1030); // Invalid data format
+                        }
+                        if (tokenUsed(requestJSON, String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())))) {
+                            errorCodes.add(105); // Token was already used once
+                        }
+                        if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                            errorCodes.add(107); // Value is missing
+                        }
+                        break;
+                    case "balance":
+                        if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                            errorCodes.add(107); // Value is missing
+                        }
+                        String BalanceClassName = defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase()));
+                        switch (BalanceClassName) {
+                            case "Integer":
+                            case "Long":
+                                errorCodes.add(1031); // Invalid data format not critical
+                                break;
+                            case "String":
+                                try {
+                                    Double.parseDouble(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())));
+                                    if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) <= 1) {
+                                        errorCodes.add(1031); // Invalid data format not critical
+                                    } else if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) > 2) {
+                                        errorCodes.add(1032); // Invalid data format too many decimals
+                                    }
+                                } catch (Exception e) {
+                                    errorCodes.add(1030); // Invalid data format
+                                }
+                                break;
+                            case "BigDecimal":
+                                if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) <= 1) {
+                                    errorCodes.add(1031); // Invalid data format not critical
+                                } else if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) > 2) {
+                                    errorCodes.add(1032); // Invalid data format too many decimals
+                                }
+                                break;
+                            default:
+                                errorCodes.add(1030); // Invalid data format
+                                break;
+                        }
+                        break;
+                    case "currency":
+                        if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals
+                                (dynamicConfigDAO.findDynamicCondigById(requestJSON.getLong("operatorId")).get().getCurrency())) {
+                            errorCodes.add(1040); // Wrong value
+                        }
+                        if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                            errorCodes.add(107); // Value is missing
+                        }
+                        if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
+                            errorCodes.add(1030); // Invalid data format
+                        } else if (!correctCurrencyFormat(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())))) {
+                            errorCodes.add(1030); // Invalid data format
+                        }
+                        break;
+                    case "errorcode":
+                        if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                            errorCodes.add(107); // Value is missing
+                        }
+                        if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("Integer")) {
+                            errorCodes.add(1030); // Invalid data format
+                        }
+                        break;
+                    case "timestamp":
+                        if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                            errorCodes.add(107); // Value is missing
+                        }
+                        String TimestampClassName = defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase()));
+                        switch (TimestampClassName) {
+                            case "Integer":
+                                errorCodes.add(1031); // Invalid data format not critical
+                                break;
+                            case "String":
+                                try {
+                                    Long.parseLong(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())));
+                                    if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() != 13) {
+                                        errorCodes.add(1031); // Invalid data format not critical
+                                    }
+                                } catch (Exception e) {
+                                    errorCodes.add(1030); // Invalid data format
+                                }
+                                break;
+                            case "BigDecimal":
+                                errorCodes.add(1030); // Invalid data format
+                                break;
+                            default:
+                                break;
+                        }
+                        break;
+                    case "nickname":
+                        if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                            errorCodes.add(207); // Value is missing non mandatory
+                        }
+                        if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
+                            errorCodes.add(2030); // Invalid data format non mandatory
+                        }
+                        break;
+                    case "playertokenatlaunch":
+                    case "vip":
+                        errorCodes.add(3); // No need in this key here
+                        break;
+                    case "clientip":
+                        if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                            errorCodes.add(207); // Value is missing non mandatory
+                        }
+                        if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
+                            errorCodes.add(2030); // Invalid data format non mandatory
+                        }
+                        if (!checkValidIp(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())))) {
+                            errorCodes.add(2030); // Invalid data format non mandatory
+                        }
+                        break;
+                    case "bonusamount":
+                        if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
+                            errorCodes.add(207); // Value is missing non mandatory
+                        }
+                        String BonusAmountClassName = defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase()));
+                        switch (BonusAmountClassName) {
+                            case "Integer":
+                            case "Long":
+                                errorCodes.add(2031); // Invalid data format not critical non mandatory
+                                break;
+                            case "String":
+                                try {
+                                    Double.parseDouble(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())));
+                                    if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) <= 1) {
+                                        errorCodes.add(2031); // Invalid data format not critical non mandatory
+                                    } else if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) > 2) {
+                                        errorCodes.add(2032); // Invalid data format too many decimals non mandatory
+                                    }
+                                } catch (Exception e) {
+                                    errorCodes.add(2030); // Invalid data format non mandatory
+                                }
+                                break;
+                            case "BigDecimal":
+                                if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) <= 1) {
+                                    errorCodes.add(2031); // Invalid data format not critical non mandatory
+                                } else if (countDecimals(responseMapWithLowerCaseKeys.get(key.toLowerCase())) > 2) {
+                                    errorCodes.add(2032); // Invalid data format too many decimals non mandatory
+                                }
+                                break;
+                            default:
+                                errorCodes.add(2030); // Invalid data format non mandatory
+                                break;
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            } else {
+                if (Arrays.stream(mandatoryKeys).anyMatch(key::equalsIgnoreCase)) {
+                    errorCodes.add(101); //Key doesn't exist
+                }
+            }
+//            if (responseKeys.contains(key)) {
+//                if (errorCodes.size() == 0) {
+//                    if (Arrays.stream(mandatoryKeys).anyMatch(key::equalsIgnoreCase)) {
+//                        errorCodes.add(0);
+//                    } else if (Arrays.stream(optionalKeys).anyMatch(key::equalsIgnoreCase)) {
+//                        errorCodes.add(2);
+//                    }
+//                }
+//            }
+            switch (caseNumber) {
+                case "Case_2":
+                    switch (key) {
+                        case "balance":
+                            if (Double.parseDouble(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != CACHE.get(requestJSON.getLong("operatorId")).get(cacheKeys.get(cacheKeys.size() - 1))[1]) {
+                                errorCodes.add(1040); // Wrong value
+                            }
+                            break;
+                        case "errorcode":
+                            if (Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 0) {
+                                errorCodes.add(106); // Invalid error code
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+                case "Case_3":
+                    switch (key) {
+                        case "balance":
+                            if (Double.parseDouble(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != CACHE.get(requestJSON.getLong("operatorId")).get(cacheKeys.get(cacheKeys.size() - 1))[1]) {
+                                errorCodes.add(1040); // Wrong value
+                            }
+                            break;
+                        case "errorcode":
+                            if (Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 0) {
+                                errorCodes.add(106); // Invalid error code
+                            }
+                            break;
+                        case "errordescription":
+                            if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("already")) {
+                                errorCodes.add(1041); // Possible wrong value;
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+            }
+            if (responseKeys.contains(key)) {
+                if (errorCodes.size() == 0) {
+                    if (Arrays.stream(mandatoryKeys).anyMatch(key::equalsIgnoreCase)) {
+                        errorCodes.add(0);
+                    } else if (Arrays.stream(optionalKeys).anyMatch(key::equalsIgnoreCase)) {
+                        errorCodes.add(2);
+                    }
+                }
+            }
+            if (errorCodes.size() > 0) {
+                results.put(key, recordParameterProperties(key, responseJSON, errorCodes));
+            }
         }
 
-        return null;
+        return results;
     }
 
-    private ParameterProperties recordParameterProperties(String key, ArrayList<Integer> errorCodes) {
+
+    private ParameterProperties recordParameterProperties(String key, JSONObject responseJSON, HashSet<Integer> errorCodes) {
         ParameterProperties parameterProperties = new ParameterProperties();
         ArrayList<String> foundErrors = new ArrayList<>();
         for (int errorCode : errorCodes) {
             switch (errorCode) {
-
+                case 0:
+                case 2:
+                    parameterProperties.setMandatory(errorCode == 0);
+                    parameterProperties.setExists(true);
+                    parameterProperties.setErrorState(ERRORSTATE.OK);
+                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+                    foundErrors.add("No errors found");
+                    parameterProperties.setFoundErrors(foundErrors);
+                    return parameterProperties;
                 case 101:
                     parameterProperties.setMandatory(true);
                     parameterProperties.setExists(false);
                     parameterProperties.setErrorState(ERRORSTATE.E);
                     parameterProperties.setDataFormat("N/A");
-                    foundErrors.add("Key " + key + " not exists.");
+                    foundErrors.add("Key " + key + " doesn't exist.");
                     parameterProperties.setFoundErrors(foundErrors);
+                    return parameterProperties;
+                case 102:
+                case 202:
+                    parameterProperties.setMandatory(errorCode == 102);
+                    parameterProperties.setExists(true);
+                    parameterProperties.setErrorState(ERRORSTATE.E);
+                    try {
+                        parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+                    } catch (JSONException e) {
+                        String temp = String.valueOf(responseJSON).toLowerCase();
+                        JSONObject tempObject = new JSONObject(temp);
+                        parameterProperties.setDataFormat(defineObjectType(tempObject.get(key.toLowerCase())));
+                    }
+                    foundErrors.add("Key " + key + " has invalid key format (Case Sensitive)");
+                    parameterProperties.setFoundErrors(foundErrors);
+                    break;
+                case 1030:
+                case 2030:
+                    parameterProperties.setMandatory(errorCode == 1030);
+                    parameterProperties.setExists(true);
+                    parameterProperties.setErrorState(ERRORSTATE.E);
+                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+                    foundErrors.add("Key " + key + " has invalid data format.");
+                    parameterProperties.setFoundErrors(foundErrors);
+                    break;
+                case 1031:
+                case 2031:
+                    parameterProperties.setMandatory(errorCode == 1031);
+                    parameterProperties.setExists(true);
+                    parameterProperties.setErrorState(ERRORSTATE.W);
+                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+                    foundErrors.add("Key " + key + " has invalid data format.");
+                    parameterProperties.setFoundErrors(foundErrors);
+                    break;
+                case 1032:
+                case 2032:
+                    parameterProperties.setMandatory(errorCode == 1032);
+                    parameterProperties.setExists(true);
+                    parameterProperties.setErrorState(ERRORSTATE.E);
+                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+                    foundErrors.add("Key " + key + " has invalid data format. Too many decimals.");
+                    parameterProperties.setFoundErrors(foundErrors);
+                    break;
+                case 1040:
+                case 2040:
+                    parameterProperties.setMandatory(errorCode == 1040);
+                    parameterProperties.setExists(true);
+                    parameterProperties.setErrorState(ERRORSTATE.E);
+                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+                    foundErrors.add("Key " + key + " has invalid value.");
+                    parameterProperties.setFoundErrors(foundErrors);
+                    break;
+                case 1041:
+                    parameterProperties.setMandatory(true);
+                    parameterProperties.setExists(true);
+                    parameterProperties.setErrorState(ERRORSTATE.W);
+                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+                    foundErrors.add("Key " + key + " probably has invalid value.");
+                    parameterProperties.setFoundErrors(foundErrors);
+                    break;
+//                case 1042:
+//                    parameterProperties.setMandatory(errorCode == 1042);
+//                    parameterProperties.setExists(true);
+//                    parameterProperties.setErrorState(ERRORSTATE.E);
+//                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+//                    foundErrors.add("Key " + key + " has invalid value.");
+//                    parameterProperties.setFoundErrors(foundErrors);
+//                    break;
+                case 2051:
+                    parameterProperties.setMandatory(false);
+                    parameterProperties.setExists(true);
+                    parameterProperties.setErrorState(ERRORSTATE.E);
+                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+                    foundErrors.add("Initial token same as session.");
+                    parameterProperties.setFoundErrors(foundErrors);
+                    break;
+                case 105:
+                case 205:
+                    parameterProperties.setMandatory(errorCode == 105);
+                    parameterProperties.setExists(true);
+                    parameterProperties.setErrorState(errorCode == 105 ? ERRORSTATE.E : ERRORSTATE.W);
+                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+                    foundErrors.add("Key " + key + " has value, which already was used once.");
+                    parameterProperties.setFoundErrors(foundErrors);
+                    break;
+                case 106:
+                    parameterProperties.setMandatory(true);
+                    parameterProperties.setExists(true);
+                    parameterProperties.setErrorState(ERRORSTATE.E);
+                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+                    foundErrors.add("Not expected error code.");
+                    parameterProperties.setFoundErrors(foundErrors);
+                    break;
+                case 107:
+                case 207:
+                    parameterProperties.setMandatory(errorCode == 107);
+                    parameterProperties.setExists(true);
+                    parameterProperties.setErrorState(ERRORSTATE.E);
+                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+                    foundErrors.add("Key " + key + " exists, but value is missing.");
+                    parameterProperties.setFoundErrors(foundErrors);
+                    break;
+                case 3:
+                    parameterProperties.setMandatory(false);
+                    parameterProperties.setExists(true);
+                    parameterProperties.setErrorState(ERRORSTATE.W);
+                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+                    foundErrors.add("No need to return key " + key + " for this case.");
+                    parameterProperties.setFoundErrors(foundErrors);
+                    break;
+                default:
                     break;
             }
         }
@@ -224,48 +998,88 @@ public class PrepareResult {
 
     }
 
-    private OperatorResponse prepareExpectedResponse(String caseNumber, String request, String response) {
+    private String prepareExpectedResponse(String caseNumber, String request, String response) {
         JSONObject responseJSON = new JSONObject(response);
         JSONObject requestJSON = new JSONObject(request);
-        ArrayList<String> responseKeys = (ArrayList<String>) responseJSON.keySet();
-        OperatorResponse expectedResponse = new OperatorResponse();
+        HashMap<String, Object> expectedResponseMap = new LinkedHashMap<>();
+        String expectedResponseString = "";
+        ArrayList<String> responseKeys = new ArrayList<String>(responseJSON.keySet());
         Optional<OperatorsDynamicConfig> dynamicConfig = dynamicConfigDAO.findDynamicCondigById(requestJSON.optLong("operatorId"));
+        expectedResponseMap.put("operatorId", requestJSON.optLong("operatorId"));
         switch (caseNumber) {
             case "Case_0":
-                expectedResponse.setOperatorId(requestJSON.optLong("operatorId"));
-                expectedResponse.setUid(dynamicConfig.get().getUid());
-                expectedResponse.setToken(dynamicConfig.get().getSessionToken());
-                expectedResponse.setBalance(BigDecimal.valueOf(cache.get(requestJSON.optLong("operatorId")).get(caseNumber)[1]).setScale(2, RoundingMode.HALF_DOWN));
-                expectedResponse.setCurrency(defineExpectedCurrency(dynamicConfig));
-                expectedResponse.setErrorCode(0);
-                expectedResponse.setErrorDescription("OK");
-                expectedResponse.setTimestamp(System.currentTimeMillis());
+                expectedResponseMap.put("uid", dynamicConfig.get().getUid());
+                expectedResponseMap.put("token", dynamicConfig.get().getSessionToken());
+                expectedResponseMap.put("balance", BigDecimal.valueOf(CACHE.get(requestJSON.optLong("operatorId"))
+                        .get(caseNumber)[1]).setScale(2, RoundingMode.HALF_DOWN));
+                expectedResponseMap.put("currency", defineExpectedCurrency(dynamicConfig));
+                expectedResponseMap.put("errorCode", 0);
+                expectedResponseMap.put("errorDescription", "OK");
+                expectedResponseMap.put("timestamp", System.currentTimeMillis());
                 if (compareKeysIgnoringCase(optionalKeys[0], responseKeys)) {
-                    expectedResponse.setNickName(responseJSON.optString(optionalKeys[0]));
+                    expectedResponseMap.put(optionalKeys[0], responseJSON.optString(optionalKeys[0], "Player's Nickname"));
                 }
                 if (compareKeysIgnoringCase(optionalKeys[1], responseKeys)) {
-                    expectedResponse.setPlayerTokenAtLaunch(requestJSON.optString("token"));
+                    expectedResponseMap.put(optionalKeys[1], requestJSON.optString("token"));
                 }
                 if (compareKeysIgnoringCase(optionalKeys[2], responseKeys)) {
                     if (checkValidIp(responseJSON.optString(optionalKeys[2]))) {
-                        expectedResponse.setClientIP(responseJSON.optString(optionalKeys[2]));
+                        expectedResponseMap.put(optionalKeys[2], responseJSON.optString(optionalKeys[2]));
                     } else {
-                        expectedResponse.setClientIP("127.0.0.1");
+                        expectedResponseMap.put(optionalKeys[2], "127.0.0.1");
                     }
                 }
                 if (compareKeysIgnoringCase(optionalKeys[3], responseKeys)) {
-                    expectedResponse.setVIP("0");
+                    expectedResponseMap.put(optionalKeys[3], "0");
                 }
                 if (compareKeysIgnoringCase(optionalKeys[4], responseKeys)) {
-                    expectedResponse.setBonusAmount(BigDecimal.valueOf(responseJSON.optDouble("bonusAmount")).setScale(2, RoundingMode.HALF_DOWN));
+                    expectedResponseMap.put(optionalKeys[4], BigDecimal.valueOf(responseJSON.optDouble("bonusAmount")).setScale(2, RoundingMode.HALF_DOWN));
                 }
-                return expectedResponse;
+                expectedResponseString = gson.toJson(expectedResponseMap);
+
+                return beautifyJsonString(expectedResponseString);
 
             case "Case_1":
-
+                expectedResponseMap.put("errorCode", 6);
+                expectedResponseMap.put("errorDescription", "Token not found");
+                expectedResponseMap.put("timestamp", System.currentTimeMillis());
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
         }
-
-        return null;
+        expectedResponseMap.put("uid", dynamicConfig.get().getUid());
+        expectedResponseMap.put("token", dynamicConfig.get().getSessionToken());
+        expectedResponseMap.put("roundId", requestJSON.get("roundId"));
+        expectedResponseMap.put("transactionId", responseJSON.get("transactionId"));
+        expectedResponseMap.put("balance", BigDecimal.valueOf(CACHE.get(requestJSON.optLong("operatorId"))
+                .get(caseNumber)[1]).setScale(2, RoundingMode.HALF_DOWN));
+        expectedResponseMap.put("currency", defineExpectedCurrency(dynamicConfig));
+        expectedResponseMap.put("timestamp", System.currentTimeMillis());
+        if (compareKeysIgnoringCase(optionalKeys[0], responseKeys)) {
+            expectedResponseMap.put(optionalKeys[0], responseJSON.optString(optionalKeys[0], "Player's Nickname"));
+        }
+        if (compareKeysIgnoringCase(optionalKeys[2], responseKeys)) {
+            if (checkValidIp(responseJSON.optString(optionalKeys[2]))) {
+                expectedResponseMap.put(optionalKeys[2], responseJSON.optString(optionalKeys[2]));
+            } else {
+                expectedResponseMap.put(optionalKeys[2], "127.0.0.1");
+            }
+        }
+        if (compareKeysIgnoringCase(optionalKeys[4], responseKeys)) {
+            expectedResponseMap.put(optionalKeys[4], BigDecimal.valueOf(responseJSON.optDouble("bonusAmount")).setScale(2, RoundingMode.HALF_DOWN));
+        }
+        switch (caseNumber) {
+            case "Case_2":
+                expectedResponseMap.put("errorCode", 0);
+                expectedResponseMap.put("errorDescription", "OK");
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+            case "Case_3":
+                expectedResponseMap.put("errorCode", 0);
+                expectedResponseMap.put("errorDescription", "Transaction already processed");
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+        }
+        return beautifyJsonString(expectedResponseString);
     }
 
 
@@ -291,6 +1105,7 @@ public class PrepareResult {
         int lng = operatorDAO.findOperatorByOperatorId(requestJSON.getLong("operatorId")).get().getUsedTokens().size();
         HashSet<String> temp = operatorDAO.findOperatorByOperatorId(requestJSON.getLong("operatorId")).get().getUsedTokens();
         temp.add(token);
+        operatorDAO.addOperator(operatorDAO.findOperatorByOperatorId(requestJSON.getLong("operatorId")).get());
         return lng == temp.size();
     }
 
@@ -347,6 +1162,44 @@ public class PrepareResult {
         return (InetAddressUtils.isIPv4Address(ipAddress));
     }
 
+    private static String beautifyJsonString(String jsonString) {
+        return jsonString.replace("\n", "").replace("{", "{\r\n")
+                .replace(",\"", ",\r\n\"").replace("}", "\r\n}");
+    }
+
+    private static String generateDebitTransactionId() {
+        String transactionId = String.valueOf(UUID.randomUUID());
+        transactionId = transactionId.replaceFirst(String.valueOf(transactionId.charAt(0)), "d");
+        return transactionId;
+    }
+
+    private static String generateCreditTransactionId(String debitTransactionId) {
+        String transactionId = "";
+        if (debitTransactionId.equals("-1")) {
+            transactionId = generateDebitTransactionId();
+            transactionId = transactionId.replaceFirst(String.valueOf(transactionId.charAt(0)), "c");
+        } else {
+            transactionId = debitTransactionId.replaceFirst(String.valueOf(debitTransactionId.charAt(0)), "c");
+        }
+        return transactionId;
+    }
+
+//    private String recordLog(String caseName, long operatorId) {
+//        return logging.logParser(caseName, String.valueOf(operatorId));
+//    }
+
+    private static String getLogRecord(String caseName, long operatorId) throws IOException {
+        String path = "file/" + operatorId + "_Test_Log.log";
+        Charset encoding = StandardCharsets.UTF_8;
+        String[] logRecords = readFile(path, encoding).split(caseName);
+        return logRecords[logRecords.length-1];
+    }
+
+    private static String readFile(String path, Charset encoding)
+            throws IOException {
+        byte[] encoded = Files.readAllBytes(Paths.get(path));
+        return new String(encoded, encoding);
+    }
 
     private static String generateHash(String request, String secret) {
         try {

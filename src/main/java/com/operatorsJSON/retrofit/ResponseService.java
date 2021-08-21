@@ -8,7 +8,7 @@ import retrofit2.http.*;
 public interface ResponseService {
     @Headers("Content-Type: application/json")
     @POST()
-    public Call<OperatorResponse> postRequestAsUrl(@Url String requestUrl, @Body String request,
+    public Call<String> postRequestAsUrl(@Url String requestUrl, @Body String request,
                                                    @Header(value = "hash") String hash);
 
     @POST()

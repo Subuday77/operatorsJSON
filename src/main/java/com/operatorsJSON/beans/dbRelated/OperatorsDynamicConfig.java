@@ -16,7 +16,7 @@ import javax.persistence.Table;
 public class OperatorsDynamicConfig {
 
     private long belongsToOperator;
-    private long startingRound = (int) (Math.random() * (999999 - 100000 + 1)) + 100000;
+    private long startingRound;
     private int delay = 0;
     private String initialToken;
     private String sessionToken;

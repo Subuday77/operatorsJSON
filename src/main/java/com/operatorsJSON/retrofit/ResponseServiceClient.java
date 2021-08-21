@@ -16,21 +16,20 @@ public class ResponseServiceClient {
     RetrofitApi retrofitApi;
 
 
-    public OperatorResponse<?> getResponse(String baseUrl, String method, String request, String hash) {
+    public String getResponse(String baseUrl, String method, String request, String hash) {
 //        String baseUrl = starter.getOperatorUrl() + starter.getContextRootName();
 //        String baseUrl = "http://127.0.0.1";
         RetrofitApi.baseUrl = baseUrl;
         RetrofitApi.getInstance();
         ResponseService service = retrofitApi.getResponseService();
         String requestUrl = baseUrl + method;
-        Call<OperatorResponse> callSync = service.postRequestAsUrl(requestUrl, request, hash);
+        Call<String> callSync = service.postRequestAsUrl(requestUrl, request, hash);
 
         try {
 
-            Response<OperatorResponse> response = callSync.execute();
-            OperatorResponse<?> apiResponse = response.body();
+            Response<String> response = callSync.execute();
 
-            return apiResponse;
+            return String.valueOf(response.body());
 
         } catch (Exception ex) {
 

@@ -17,14 +17,35 @@ public class OperatorResponse<T> {
     private T balance;
     private String transactionId;
     private String currency;
-    private String language;
-    private String date;
     private String clientIP;
     private T VIP;
     private T bonusAmount;
-    private int errorCode=-123;
+    private int errorCode = -123;
     private String errorDescription;
     private long timestamp;
+
+    public OperatorResponse() {
+    }
+
+    public OperatorResponse(long operatorId, long roundId, String uid, String nickName, String playerTokenAtLaunch, String token,
+                            T balance, String transactionId, String currency, String clientIP, T VIP, T bonusAmount, int errorCode,
+                            String errorDescription, long timestamp) {
+        this.operatorId = operatorId;
+        this.roundId = roundId;
+        this.uid = uid;
+        this.nickName = nickName;
+        this.playerTokenAtLaunch = playerTokenAtLaunch;
+        this.token = token;
+        this.balance = balance;
+        this.transactionId = transactionId;
+        this.currency = currency;
+        this.clientIP = clientIP;
+        this.VIP = VIP;
+        this.bonusAmount = bonusAmount;
+        this.errorCode = errorCode;
+        this.errorDescription = errorDescription;
+        this.timestamp = timestamp;
+    }
 
     public long getOperatorId() {
         return operatorId;
@@ -122,21 +143,6 @@ public class OperatorResponse<T> {
         this.playerTokenAtLaunch = playerTokenAtLaunch;
     }
 
-    public String getLanguage() {
-        return language;
-    }
-
-    public void setLanguage(String language) {
-        this.language = language;
-    }
-
-    public String getDate() {
-        return date;
-    }
-
-    public void setDate(String date) {
-        this.date = date;
-    }
 
     public String getClientIP() {
         return clientIP;
@@ -166,8 +172,7 @@ public class OperatorResponse<T> {
     public String toString() {
         return "OperatorResponse [operatorId=" + operatorId + ", roundId=" + roundId + ", uid=" + uid + ", nickName="
                 + nickName + ", playerTokenAtLaunch=" + playerTokenAtLaunch + ", token=" + token + ", balance="
-                + balance + ", transactionId=" + transactionId + ", currency=" + currency + ", language=" + language
-                + ", date=" + date + ", clientIP=" + clientIP + ", VIP=" + VIP + ", bonusAmount=" + bonusAmount
+                + balance + ", transactionId=" + transactionId + ", currency=" + currency + " clientIP=" + clientIP + ", VIP=" + VIP + ", bonusAmount=" + bonusAmount
                 + ", errorCode=" + errorCode + ", errorDescription=" + errorDescription + ", timestamp=" + timestamp
                 + "]";
     }

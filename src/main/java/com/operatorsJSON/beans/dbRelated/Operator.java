@@ -20,7 +20,7 @@ public class Operator {
     private String debitMethodName;
     private String rollbackMethodName;
     private String hashKey;
-    private HashSet<String> usedTokens;
+    private HashSet<String> usedTokens = new HashSet<>();
     private long addedTo = -1;
     private OperatorsDynamicConfig relatedConfig;
 

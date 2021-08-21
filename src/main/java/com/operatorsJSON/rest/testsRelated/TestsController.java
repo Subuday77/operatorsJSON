@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import javax.servlet.http.HttpServletRequest;
+import java.io.IOException;
 import java.util.*;
 
 @RestController
@@ -51,11 +52,28 @@ public class TestsController {
         return prepareResult.authAttempt(operatorId);
     }
 
+    @PostMapping("/starttest")
+//    public ResponseEntity<?> startTestFlow(@RequestBody ArrayList<String> casesList) throws JsonProcessingException {
+    public ResponseEntity<?> startTestFlow() throws IOException {
+        ArrayList<String> casesList = new ArrayList<>();
+        casesList.add("Case_1");
+        casesList.add("Case_2");
+        casesList.add("Case_3");
+        String userName = servletRequest.getHeader("userName");
+        String password = servletRequest.getHeader("password");
+        long operatorId = Long.parseLong(servletRequest.getHeader("operatorId"));
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        }
+        Optional<Operator> operatorToTest = operatorDAO.findOperatorByOperatorId(operatorId);
+        if (!operatorToTest.isPresent()) {
+            return new ResponseEntity<String>("Operator not found.", HttpStatus.NOT_FOUND);
+        }
+        return prepareResult.testFlow(operatorId, casesList);
+    }
+
     private boolean actionAllowed(String userName, String password) {
         Optional<Login> loginToCheck = loginDAO.findLoginByUserName(userName);
-        if (loginToCheck.isPresent()) {
-            return loginToCheck.get().getPassword().equals(password);
-        }
-        return false;
+        return loginToCheck.map(login -> login.getPassword().equals(password)).orElse(false);
     }
 }
