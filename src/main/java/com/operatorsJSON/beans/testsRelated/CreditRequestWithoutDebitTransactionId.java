@@ -1,48 +1,38 @@
 package com.operatorsJSON.beans.testsRelated;
 
-import com.operatorsJSON.DAO.dbRelated.OperatorsDynamicConfigDAO;
+import com.operatorsJSON.SetValues;
+import com.operatorsJSON.beans.Constants;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
 @Component
-public class RequestCommon {
+public class CreditRequestWithoutDebitTransactionId implements SetValues {
     private long operatorId;
     private String uid;
     private String transactionId;
-    private int gameId = 1;
+    private int gameId;
     private String token;
-    private int betTypeID = 1;
-    private int serverId = 102;
+    private BigDecimal creditAmount; // unique
+    private int betTypeID;
+    private int serverId;
     private long roundId;
     private String currency;
-    private String seatId = "s" + ((int) (Math.random() * 7) + 1);
-    private int platformId = 0;
-    private long tableId = 1;
+    private String seatId;
+    private int platformId;
+    private long tableId;
+
+    private int returnReason=0; // unique
+    private String creditIndex="1|1"; // unique
+    public boolean isEndRound=true; // unique
+    private String gameDataString=""; //unique
+
     private long timestamp;
 
     @Autowired
-    OperatorsDynamicConfigDAO dynamicConfigDAO;
-
-    public RequestCommon() {
-
-    }
-
-    public RequestCommon(long operatorId, String uid, String transactionId, int gameId, String token, int betTypeID,
-                         int serverId, long roundId, String currency, String seatId, int platformId, long tableId, long timestamp) {
-        this.operatorId = operatorId;
-        this.uid = uid;
-        this.transactionId = transactionId;
-        this.gameId = gameId;
-        this.token = token;
-        this.betTypeID = betTypeID;
-        this.serverId = serverId;
-        this.roundId = roundId;
-        this.currency = currency;
-        this.seatId = seatId;
-        this.platformId = platformId;
-        this.tableId = tableId;
-        this.timestamp = timestamp;
-    }
+    RequestCommon requestCommon;
 
     public long getOperatorId() {
         return operatorId;
@@ -82,6 +72,14 @@ public class RequestCommon {
 
     public void setToken(String token) {
         this.token = token;
+    }
+
+    public BigDecimal getCreditAmount() {
+        return creditAmount;
+    }
+
+    public void setCreditAmount(BigDecimal creditAmount) {
+        this.creditAmount = creditAmount.setScale(2, RoundingMode.HALF_DOWN);
     }
 
     public int getBetTypeID() {
@@ -140,6 +138,32 @@ public class RequestCommon {
         this.tableId = tableId;
     }
 
+    public int getReturnReason() {
+        return returnReason;
+    }
+
+    public void setReturnReason(int returnReason) {
+        this.returnReason = returnReason;
+    }
+
+    public String getCreditIndex() {
+        return creditIndex;
+    }
+
+    public void setCreditIndex(String creditIndex) {
+        this.creditIndex = creditIndex;
+    }
+
+
+
+//	public boolean isEndRound() {
+//		return isEndRound;
+//	}
+//
+//	public void setIsEndRound(boolean isEndRound) {
+//		this.isEndRound = isEndRound;
+//	}
+
     public long getTimestamp() {
         return timestamp;
     }
@@ -148,22 +172,27 @@ public class RequestCommon {
         this.timestamp = timestamp;
     }
 
-
-
-    @Override
-    public String toString() {
-        return "RequestCommon [operatorId=" + operatorId + ", uid=" + uid + ", transactionId=" + transactionId
-                + ", gameId=" + gameId + ", token=" + token + ", betTypeID=" + betTypeID + ", serverId=" + serverId
-                + ", roundId=" + roundId + ", currency=" + currency + ", seatId=" + seatId + ", platformId="
-                + platformId + ", tableId=" + tableId + ", timestamp=" + timestamp + "]";
+    public String getGameDataString() {
+        return gameDataString;
     }
 
+    public void setGameDataString(String gameDataString) {
+        this.gameDataString = gameDataString;
+    }
 
-    public void setValues(long operatorId) {
-        setOperatorId(operatorId);
-        setToken(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getSessionToken());
-        setUid(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getUid());
-        setRoundId((int) (Math.random() * (999999 - 100000 + 1)) + 100000);
-        setCurrency(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getCurrency());
+    @Override
+    public void setValues() {
+        setOperatorId(requestCommon.getOperatorId());
+        setUid(requestCommon.getUid());
+        setToken(requestCommon.getToken());
+        setBetTypeID(requestCommon.getBetTypeID()+100);
+        setRoundId(requestCommon.getRoundId());
+        setCurrency(requestCommon.getCurrency());
+        setSeatId(requestCommon.getSeatId());
+        setPlatformId(requestCommon.getPlatformId());
+        setServerId(requestCommon.getServerId());
+        setGameId(requestCommon.getGameId());
+        setTableId(requestCommon.getTableId());
+
     }
 }

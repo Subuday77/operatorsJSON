@@ -21,7 +21,7 @@ public class OperatorsDynamicConfigDAO {
         dynamicConfigRepo.delete(dynamicConfig);
     }
 
-    public Optional<OperatorsDynamicConfig> findDynamicCondigById(Long id) {
+    public Optional<OperatorsDynamicConfig> findDynamicConfigById(Long id) {
         return dynamicConfigRepo.findById(id);
     }
 }

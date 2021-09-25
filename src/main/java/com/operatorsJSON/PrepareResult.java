@@ -1,6 +1,5 @@
 package com.operatorsJSON;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
 import com.google.gson.Gson;
@@ -47,6 +46,8 @@ public class PrepareResult {
     @Autowired
     CreditRequest creditRequest;
     @Autowired
+    CreditRequestWithoutDebitTransactionId creditRequestWithoutDebitTransactionId;
+    @Autowired
     RollbackRequest rollbackRequest;
     @Autowired
     ResultToSend resultToSend;
@@ -58,6 +59,17 @@ public class PrepareResult {
     Gson gson = new Gson();
     ObjectWriter ow = new ObjectMapper().writer();
     ObjectWriter owPretty = new ObjectMapper().writer().withDefaultPrettyPrinter();
+
+    private String operatorInProcess;
+
+    public String getOperatorInProcess() {
+        return operatorInProcess;
+    }
+
+    public void setOperatorInProcess(String operatorInProcess) {
+        this.operatorInProcess = operatorInProcess;
+    }
+
 
 //    public static HashMap<Long, LinkedHashMap<String, double[]>> getCache() {
 //        return cache;
@@ -72,19 +84,22 @@ public class PrepareResult {
     // Expected calculated balance
     // Calculated balance
 
-    public synchronized ResponseEntity<?> authAttempt(long operatorId) throws JsonProcessingException {
+    public synchronized ResponseEntity<?> authAttempt(long operatorId) throws IOException {
+        CACHE.remove(operatorId);
+        setOperatorInProcess(String.valueOf(operatorId));
         Optional<Operator> operatorToTest = operatorDAO.findOperatorByOperatorId(operatorId);
         String baseUrl = operatorToTest.get().getOperatorUrl() + operatorToTest.get().getContextRootName();
         ArrayList<String> cacheKeys = new ArrayList<>();
         authenticationRequest.setOperatorId(operatorId);
-        authenticationRequest.setToken(dynamicConfigDAO.findDynamicCondigById(operatorId).get().getInitialToken());
+        authenticationRequest.setToken(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getInitialToken());
+//        resultToSend.setLog("");
+//        resultToSend = new ResultToSend();
         authenticationRequest.setTimestamp(System.currentTimeMillis());
-        resultToSend.setLog("");
-//        ResultToSend resultToSend = new ResultToSend();
-        logging.logParser("Case_0", String.valueOf(operatorId));
+        logging.logParser("Case_0 Authentication", String.valueOf(operatorId));
         resultToSend.setRequest(owPretty.writeValueAsString(authenticationRequest));
         resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getAuthMethodName(), ow.writeValueAsString(authenticationRequest),
                 generateHash(ow.writeValueAsString(authenticationRequest), operatorToTest.get().getHashKey()))));
+        resultToSend.setLog(getLogRecord("Case_0", operatorId));
         int errorCode = setupDynamicConfig(resultToSend.getResponse(), operatorId);
         switch (errorCode) {
             case -1:
@@ -96,13 +111,17 @@ public class PrepareResult {
                 for (int i = 0; i < 4; i++) {
                     balances[i] = getBalance(resultToSend.getResponse());
                 }
-                LinkedHashMap<String, double[]> caseBalances = new LinkedHashMap<>();
-                caseBalances.put("Case_0", balances);
+//                LinkedHashMap<String, double[]> caseBalances = new LinkedHashMap<>();
+                ArrayList<double[]> caseBalances = new ArrayList<>();
+//                caseBalances.put("Case_0", balances);
+                caseBalances.add(balances);
+                cacheKeys.add("Case_0");
                 CACHE.put(operatorId, caseBalances);
                 if (CACHE.containsKey(operatorId)) {
                     CACHE.replace(operatorId, caseBalances);
                 }
-                resultToSend.setExpectedResponse(String.valueOf(prepareExpectedResponse("Case_0", resultToSend.getRequest(), resultToSend.getResponse())));
+                checkBalances("Case_0", operatorId);
+                resultToSend.setExpectedResponse(String.valueOf(prepareExpectedResponse("Case_0", resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys)));
                 resultToSend.setCheckResults(checkResults("Case_0", resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
                 return new ResponseEntity<ResultToSend>(resultToSend, HttpStatus.OK);
             default:
@@ -112,10 +131,11 @@ public class PrepareResult {
     }
 
     public synchronized ResponseEntity<?> testFlow(long operatorId, ArrayList<String> casesList) throws IOException {
+        setOperatorInProcess(String.valueOf(operatorId));
+//        System.out.println(getOperatorInProcess());
         LinkedHashMap<String, ResultToSend> resultsToSend = new LinkedHashMap<>();
         JSONObject responseJSON;
         double returnedBalance;
-        double[] balances;
         ResultToSend resultToSend;
         ArrayList<String> cacheKeys = new ArrayList<>();
         cacheKeys.add("Case_0");
@@ -124,40 +144,35 @@ public class PrepareResult {
         requestCommon.setValues(operatorId);
         debitRequest.setValues();
         creditRequest.setValues();
+        creditRequestWithoutDebitTransactionId.setValues();
         rollbackRequest.setValues();
+        debitRequest.setDebitAmount(BigDecimal.valueOf(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getBasicBetAmount()));
+        creditRequest.setCreditAmount(BigDecimal.valueOf(Double.parseDouble(formatMyDouble(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getBasicBetAmount() +
+                (dynamicConfigDAO.findDynamicConfigById(operatorId).get().isOnlyWholeNumbers() ? 1 : 0.99)))).setScale(2, RoundingMode.HALF_DOWN));
+        creditRequestWithoutDebitTransactionId.setCreditAmount(BigDecimal.valueOf(Double.parseDouble(formatMyDouble(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getBasicBetAmount() +
+                (dynamicConfigDAO.findDynamicConfigById(operatorId).get().isOnlyWholeNumbers() ? 1 : 0.99)))).setScale(2, RoundingMode.HALF_DOWN));
         for (String testCase : casesList) {
             switch (testCase) {
-                case "Case_1": // Repeated authentication(1)
+                case "Case_1": // Repeated authentication
                     authenticationRequest.setOperatorId(operatorId);
-                    authenticationRequest.setToken(dynamicConfigDAO.findDynamicCondigById(operatorId).get().getInitialToken());
+                    authenticationRequest.setToken(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getInitialToken());
                     resultToSend = new ResultToSend();
-//                    resultToSend.setLog("");
                     authenticationRequest.setTimestamp(System.currentTimeMillis());
-                    logging.logParser(testCase, String.valueOf(operatorId));
+                    logging.logParser(testCase + " Repeated authentication", String.valueOf(operatorId));
                     resultToSend.setRequest(owPretty.writeValueAsString(authenticationRequest));
                     resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getAuthMethodName(), ow.writeValueAsString(authenticationRequest),
                             generateHash(ow.writeValueAsString(authenticationRequest), operatorToTest.get().getHashKey()))));
-//                    resultToSend.setLog(getLog("Case 1", operatorId));
-//                    logging.logParser("Case 1", String.valueOf(operatorId), resultToSend);
                     resultToSend.setLog(getLogRecord(testCase, operatorId));
                     responseJSON = new JSONObject(resultToSend.getResponse());
                     returnedBalance = responseJSON.optDouble("balance", 0);
-                    balances = new double[4];
-                    balances[0] = returnedBalance;
-                    balances[1] = 0;
-                    balances[2] = CACHE.get(operatorId).get("Case_0")[2];
-                    balances[3] = CACHE.get(operatorId).get("Case_0")[3];
-                    CACHE.get(operatorId).put(testCase, balances);
-                    cacheKeys.add("Case_1");
-                    resultToSend.setExpectedResponse(String.valueOf(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse())));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(String.valueOf(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys)));
                     resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
                     resultsToSend.put(testCase, resultToSend);
                     break;
-                case "Case_2": // Debit(2)
+                case "Case_2": // Debit
                     resultToSend = new ResultToSend();
-//                    resultToSend.setLog("");
-                    logging.logParser(testCase, String.valueOf(operatorId));
-                    debitRequest.setDebitAmount(BigDecimal.valueOf(dynamicConfigDAO.findDynamicCondigById(operatorId).get().getBasicBetAmount()));
+                    logging.logParser(testCase + " Debit", String.valueOf(operatorId));
                     debitRequest.setTransactionId(generateDebitTransactionId());
                     debitRequest.setTimestamp(System.currentTimeMillis());
                     resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
@@ -166,21 +181,14 @@ public class PrepareResult {
                     resultToSend.setLog(getLogRecord(testCase, operatorId));
                     responseJSON = new JSONObject(resultToSend.getResponse());
                     returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
-                    balances = new double[4];
-                    balances[0] = returnedBalance;
-                    balances[1] = Double.parseDouble(formatMyDouble(dynamicConfigDAO.findDynamicCondigById(operatorId).get().getInitialBalance() - debitRequest.getDebitAmount().doubleValue()));
-                    balances[2] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[2] - debitRequest.getDebitAmount().doubleValue()));
-                    balances[3] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[2] - debitRequest.getDebitAmount().doubleValue()));
-                    CACHE.get(operatorId).put("Case_2", balances);
-                    cacheKeys.add("Case_2");
-                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse()));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
                     resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
                     resultsToSend.put(testCase, resultToSend);
                     break;
-                case "Case_3":
+                case "Case_3": // Retry for debit
                     resultToSend = new ResultToSend();
-//                    resultToSend.setLog("");
-                    logging.logParser(testCase, String.valueOf(operatorId));
+                    logging.logParser(testCase + " Retry for debit", String.valueOf(operatorId));
                     debitRequest.setTimestamp(System.currentTimeMillis());
                     resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
                     resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
@@ -188,28 +196,588 @@ public class PrepareResult {
                     resultToSend.setLog(getLogRecord(testCase, operatorId));
                     responseJSON = new JSONObject(resultToSend.getResponse());
                     returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
-                    balances = new double[4];
-                    balances[0] = returnedBalance;
-                    balances[1] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0];
-                    balances[2] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0];
-                    balances[3] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0];
-                    CACHE.get(operatorId).put("Case_3", balances);
-                    cacheKeys.add("Case_3");
-                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse()));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
                     resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
                     resultsToSend.put(testCase, resultToSend);
                     break;
+                case "Case_4": // Rollback
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Rollback", String.valueOf(operatorId));
+                    rollbackRequest.setRollbackAmount(debitRequest.getDebitAmount());
+                    rollbackRequest.setTransactionId(debitRequest.getTransactionId());
+                    rollbackRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(rollbackRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getRollbackMethodName(), ow.writeValueAsString(rollbackRequest),
+                            generateHash(ow.writeValueAsString(rollbackRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_5": // Retry for Rollback
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Retry for Rollback", String.valueOf(operatorId));
+                    rollbackRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(rollbackRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getRollbackMethodName(), ow.writeValueAsString(rollbackRequest),
+                            generateHash(ow.writeValueAsString(rollbackRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_6": // Rollback before Debit
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Rollback before Debit", String.valueOf(operatorId));
+                    rollbackRequest.setRollbackAmount(BigDecimal.valueOf(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getBasicBetAmount()));
+                    rollbackRequest.setTransactionId(generateDebitTransactionId());
+                    updateRoundId();
+                    rollbackRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(rollbackRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getRollbackMethodName(), ow.writeValueAsString(rollbackRequest),
+                            generateHash(ow.writeValueAsString(rollbackRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_7": // Debit after Rollback
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Debit after Rollback", String.valueOf(operatorId));
+                    debitRequest.setDebitAmount(rollbackRequest.getRollbackAmount());
+                    debitRequest.setTransactionId(rollbackRequest.getTransactionId());
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_8.1": // Credit (debit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Credit (debit part)", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_8.2": // Credit (credit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Credit (credit part)", String.valueOf(operatorId));
+                    creditRequest.setTransactionId(generateCreditTransactionId(debitRequest.getTransactionId()));
+                    creditRequest.setDebitTransactionId(debitRequest.getTransactionId());
+                    creditRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(creditRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getCreditMethodName(), ow.writeValueAsString(creditRequest),
+                            generateHash(ow.writeValueAsString(creditRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_9": // Retry for credit
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Retry for credit", String.valueOf(operatorId));
+                    creditRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(creditRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getCreditMethodName(), ow.writeValueAsString(creditRequest),
+                            generateHash(ow.writeValueAsString(creditRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_10.1": // Credit with amount 0 (debit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Credit with amount 0 (debit part)", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_10.2": // Credit with amount 0 (credit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Credit with amount 0 (credit part)", String.valueOf(operatorId));
+                    creditRequest.setTransactionId(generateCreditTransactionId(debitRequest.getTransactionId()));
+                    creditRequest.setCreditAmount(BigDecimal.valueOf(0.00).setScale(2, RoundingMode.HALF_DOWN));
+                    creditRequest.setDebitTransactionId(debitRequest.getTransactionId());
+                    creditRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(creditRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getCreditMethodName(), ow.writeValueAsString(creditRequest),
+                            generateHash(ow.writeValueAsString(creditRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    creditRequest.setCreditAmount(BigDecimal.valueOf(Double.parseDouble(formatMyDouble(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getBasicBetAmount() +
+                            (dynamicConfigDAO.findDynamicConfigById(operatorId).get().isOnlyWholeNumbers() ? 1 : 0.99)))).setScale(2, RoundingMode.HALF_DOWN));
+                    break;
+                case "Case_11": // Insufficient funds
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Insufficient funds", String.valueOf(operatorId));
+                    double balance = 0;
+                    for (int i = cacheKeys.size(); i-- > 0; ) {
+//                        if (CACHE.get(operatorId).get(cacheKeys.get(i))[2] > 0) {
+//                            balance = CACHE.get(operatorId).get(cacheKeys.get(i))[2];
+                        if (CACHE.get(operatorId).get(i)[2] > 0) {
+                            balance = CACHE.get(operatorId).get(i)[2];
+                        }
+                    }
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    debitRequest.setDebitAmount(BigDecimal.valueOf(Double.parseDouble(formatMyDouble(balance + (dynamicConfigDAO.findDynamicConfigById(operatorId).get().isOnlyWholeNumbers() ? 1 : 0.01)))));
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    debitRequest.setDebitAmount(BigDecimal.valueOf(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getBasicBetAmount()));
+                    break;
+                case "Case_12": // Debit with the wrong token
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Debit with the wrong token", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    debitRequest.setToken(corruptString(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getSessionToken()));
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    debitRequest.setToken(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getSessionToken());
+                    break;
+                case "Case_13": // Debit from unknown user
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Debit from unknown user", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    debitRequest.setUid(corruptString(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getUid()));
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    debitRequest.setUid(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getUid());
+                    break;
+                case "Case_14": // Debit with negative amount
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Debit with negative amount", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    debitRequest.setDebitAmount(BigDecimal.valueOf(debitRequest.getDebitAmount().doubleValue() * (-1)).setScale(2, RoundingMode.HALF_DOWN));
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    debitRequest.setDebitAmount(BigDecimal.valueOf(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getBasicBetAmount()));
+                    break;
+                case "Case_15": // Debit all player's balance
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Debit all player's balance", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    debitRequest.setDebitAmount(BigDecimal.valueOf
+                            (CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[0] > 0 ? CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[0] : CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2])
+                            .setScale(2, RoundingMode.HALF_DOWN));
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    debitRequest.setDebitAmount(BigDecimal.valueOf(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getBasicBetAmount()));
+                    break;
+                case "Case_16": // Return reason 1 (cancel bet)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Return reason 1 (cancel bet)", String.valueOf(operatorId));
+                    creditRequest.setTransactionId(generateCreditTransactionId(debitRequest.getTransactionId()));
+                    creditRequest.setCreditAmount(BigDecimal.valueOf
+                            (CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 2)[0] > 0 ? CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 2)[0] : CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 2)[2])
+                            .setScale(2, RoundingMode.HALF_DOWN));
+                    creditRequest.setReturnReason(1);
+                    creditRequest.setDebitTransactionId(debitRequest.getTransactionId());
+                    creditRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(creditRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getCreditMethodName(), ow.writeValueAsString(creditRequest),
+                            generateHash(ow.writeValueAsString(creditRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    creditRequest.setReturnReason(0);
+                    creditRequest.setCreditAmount(BigDecimal.valueOf(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getBasicBetAmount() +
+                            (dynamicConfigDAO.findDynamicConfigById(operatorId).get().isOnlyWholeNumbers() ? 1 : 0.99)).setScale(2, RoundingMode.HALF_DOWN));
+                    break;
+                case "Case_17.1": // Return reason 2 (cancel round, debit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Return reason 2 (cancel round, debit part)", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_17.2": // Return reason 2 (cancel round, credit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Return reason 2 (cancel round, credit part)", String.valueOf(operatorId));
+                    creditRequest.setTransactionId(generateCreditTransactionId(debitRequest.getTransactionId()));
+                    creditRequest.setCreditAmount(BigDecimal.valueOf(debitRequest.getDebitAmount().doubleValue()).setScale(2, RoundingMode.HALF_DOWN));
+                    creditRequest.setReturnReason(2);
+                    creditRequest.setDebitTransactionId(debitRequest.getTransactionId());
+                    creditRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(creditRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getCreditMethodName(), ow.writeValueAsString(creditRequest),
+                            generateHash(ow.writeValueAsString(creditRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    creditRequest.setReturnReason(0);
+                    creditRequest.setCreditAmount(BigDecimal.valueOf(Double.parseDouble(formatMyDouble(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getBasicBetAmount() +
+                            (dynamicConfigDAO.findDynamicConfigById(operatorId).get().isOnlyWholeNumbers() ? 1 : 0.99)))).setScale(2, RoundingMode.HALF_DOWN));
+                    break;
+                case "Case_18.1": // Rollback with wrong amount (debit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Rollback with wrong amount (debit part)", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_18.2": // Rollback with wrong amount (rollback part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Rollback with wrong amount (rollback part)", String.valueOf(operatorId));
+                    rollbackRequest.setRollbackAmount(BigDecimal.valueOf(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getBasicBetAmount()));
+                    rollbackRequest.setTransactionId(debitRequest.getTransactionId());
+                    rollbackRequest.setTimestamp(System.currentTimeMillis());
+                    rollbackRequest.setRollbackAmount(BigDecimal.valueOf(Double.parseDouble(formatMyDouble(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getBasicBetAmount() +
+                            (dynamicConfigDAO.findDynamicConfigById(operatorId).get().isOnlyWholeNumbers() ? 1 : 0.01)))).setScale(2, RoundingMode.HALF_DOWN));
+                    resultToSend.setRequest(owPretty.writeValueAsString(rollbackRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getRollbackMethodName(), ow.writeValueAsString(rollbackRequest),
+                            generateHash(ow.writeValueAsString(rollbackRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    rollbackRequest.setRollbackAmount(BigDecimal.valueOf(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getBasicBetAmount()));
+                    break;
+                case "Case_19.1": // Credit without debitTransactionId key (debit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Credit without debitTransactionId key (debit part)", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_19.2": // Credit without debitTransactionId key (credit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Credit without debitTransactionId key (credit part)", String.valueOf(operatorId));
+                    creditRequestWithoutDebitTransactionId.setTransactionId(generateCreditTransactionId(debitRequest.getTransactionId()));
+                    creditRequestWithoutDebitTransactionId.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(creditRequestWithoutDebitTransactionId));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getCreditMethodName(), ow.writeValueAsString(creditRequestWithoutDebitTransactionId),
+                            generateHash(ow.writeValueAsString(creditRequestWithoutDebitTransactionId), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_20.1": // Credit without debitTransactionId value (debit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Credit without debitTransactionId value (debit part)", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_20.2": // Credit without debitTransactionId value (credit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Credit without debitTransactionId value (credit part)", String.valueOf(operatorId));
+                    creditRequest.setTransactionId(generateCreditTransactionId(debitRequest.getTransactionId()));
+                    creditRequest.setDebitTransactionId("");
+                    creditRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(creditRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getCreditMethodName(), ow.writeValueAsString(creditRequest),
+                            generateHash(ow.writeValueAsString(creditRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_21.1": // Credit with debitTransactionId which never was processed (debit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Credit with debitTransactionId which never was processed (debit part)", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_21.2": // Credit with debitTransactionId which never was processed (credit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Credit with debitTransactionId which never was processed (credit part)", String.valueOf(operatorId));
+                    creditRequest.setTransactionId(generateCreditTransactionId(debitRequest.getTransactionId()));
+                    creditRequest.setDebitTransactionId(generateDebitTransactionId());
+                    creditRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(creditRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getCreditMethodName(), ow.writeValueAsString(creditRequest),
+                            generateHash(ow.writeValueAsString(creditRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_22.1": // Credit with debitTransactionId which already was processed (debit part)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Credit with debitTransactionId which already was processed (debit part)", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_22.2": // Credit with debitTransactionId which already was processed (credit part I)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Credit with debitTransactionId which already was processed (credit part I)", String.valueOf(operatorId));
+                    creditRequest.setTransactionId(generateCreditTransactionId(debitRequest.getTransactionId()));
+                    creditRequest.setDebitTransactionId(debitRequest.getTransactionId());
+                    creditRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(creditRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getCreditMethodName(), ow.writeValueAsString(creditRequest),
+                            generateHash(ow.writeValueAsString(creditRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_22.3": // Credit with debitTransactionId which already was processed (credit part II)
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Credit with debitTransactionId which already was processed (credit part II)", String.valueOf(operatorId));
+                    creditRequest.setTransactionId(generateCreditTransactionId("-1"));
+                    creditRequest.setDebitTransactionId(debitRequest.getTransactionId());
+                    creditRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(creditRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getCreditMethodName(), ow.writeValueAsString(creditRequest),
+                            generateHash(ow.writeValueAsString(creditRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_23": // Debit with invalid hash
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Debit with invalid hash", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    updateRoundId();
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey() + "00"))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    break;
+                case "Case_24": // Unknown Game ID
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Unknown Game ID", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    updateRoundId();
+                    debitRequest.setGameId(99);
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    debitRequest.setGameId(requestCommon.getGameId());
+                    break;
+                case "Case_25": // Invalid Bet type ID
+                    resultToSend = new ResultToSend();
+                    logging.logParser(testCase + " Invalid Bet type", String.valueOf(operatorId));
+                    debitRequest.setTransactionId(generateDebitTransactionId());
+                    updateRoundId();
+                    debitRequest.setBetTypeID(debitRequest.getBetTypeID() + 100);
+                    debitRequest.setTimestamp(System.currentTimeMillis());
+                    resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
+                    resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                            generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+                    resultToSend.setLog(getLogRecord(testCase, operatorId));
+                    responseJSON = new JSONObject(resultToSend.getResponse());
+                    returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+                    cacheSetup(returnedBalance, operatorId, testCase, cacheKeys);
+                    resultToSend.setExpectedResponse(prepareExpectedResponse(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultToSend.setCheckResults(checkResults(testCase, resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
+                    resultsToSend.put(testCase, resultToSend);
+                    debitRequest.setBetTypeID(requestCommon.getBetTypeID());
+                    break;
+                default:
+                    break;
             }
-
         }
 
-        CACHE.remove(operatorId);
+//        CACHE.remove(operatorId);
         return new ResponseEntity<LinkedHashMap<String, ResultToSend>>(resultsToSend, HttpStatus.OK);
     }
 
     private int setupDynamicConfig(String response, long id) {
         JSONObject responseJSON = new JSONObject(response);
-        Optional<OperatorsDynamicConfig> dynamicConfig = dynamicConfigDAO.findDynamicCondigById(id);
+        Optional<OperatorsDynamicConfig> dynamicConfig = dynamicConfigDAO.findDynamicConfigById(id);
         int errorCode = responseJSON.optInt("errorCode", -1);
         if (errorCode == 0) {
             dynamicConfig.get().setSessionToken(responseJSON.optString("token"));
@@ -383,7 +951,7 @@ public class PrepareResult {
                                 if (responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals(responseMapWithLowerCaseKeys.get("token"))) {
                                     errorCodes.add(2051); // Wrong value non mandatory Initial token same as session
                                 }
-                                if (!dynamicConfigDAO.findDynamicCondigById(responseJSON.getLong("operatorId")).get()
+                                if (!dynamicConfigDAO.findDynamicConfigById(responseJSON.getLong("operatorId")).get()
                                         .getInitialToken().equals(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) {
                                     errorCodes.add(2040); //Wrong value non mandatory
                                 }
@@ -618,9 +1186,15 @@ public class PrepareResult {
                         if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
                             errorCodes.add(107); // Value is missing
                         }
-                        if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals
-                                (dynamicConfigDAO.findDynamicCondigById(requestJSON.getLong("operatorId")).get().getUid())) {
-                            errorCodes.add(1040); // Wrong value
+                        if (!caseNumber.equals("Case_13")) {
+                            if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals
+                                    (dynamicConfigDAO.findDynamicConfigById(requestJSON.getLong("operatorId")).get().getUid())) {
+                                errorCodes.add(1040); // Wrong value
+                            }
+                        } else {
+                            if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals(requestJSON.get("uid"))) {
+                                errorCodes.add(1040); // Wrong value
+                            }
                         }
                         break;
                     case "errordescription":
@@ -630,18 +1204,87 @@ public class PrepareResult {
                         if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
                             errorCodes.add(107); // Value is missing
                         }
+                        switch (caseNumber) {
+                            case "Case_3":
+                            case "Case_5":
+                            case "Case_9":
+                            case "Case_22.3":
+                                if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("already")) {
+                                    errorCodes.add(1041); // Possible wrong value;
+                                }
+                                break;
+                            case "Case_6":
+                                if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("before") && !String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("not found")) {
+                                    errorCodes.add(1041); // Possible wrong value;
+                                }
+                                break;
+                            case "Case_7":
+                                if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("after") && !String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("already")) {
+                                    errorCodes.add(1041); // Possible wrong value;
+                                }
+                                break;
+                            case "Case_11":
+                                if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("insufficient")) {
+                                    errorCodes.add(1041); // Possible wrong value;
+                                }
+                                break;
+                            case "Case_12":
+                                if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("token")) {
+                                    errorCodes.add(1041); // Possible wrong value;
+                                }
+                                break;
+                            case "Case_13":
+                                if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("user") && !String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("uid")) {
+                                    errorCodes.add(1041); // Possible wrong value;
+                                }
+                                break;
+                            case "Case_14":
+                            case "Case_18.2":
+                                if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("negative") && !String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("amount")
+                                        && !String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("invalid")) {
+                                    errorCodes.add(1041); // Possible wrong value;
+                                }
+                                break;
+                            case "Case_19.2":
+                            case "Case_20.2":
+                            case "Case_21.2":
+                                if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("not found")) {
+                                    errorCodes.add(1041); // Possible wrong value;
+                                }
+                            case "Case_23":
+                                if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("hash")
+                                        && !String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("invalid")) {
+                                    errorCodes.add(1041); // Possible wrong value;
+                                }
+                                break;
+                            case "Case_24":
+                            case "Case_25":
+                                if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("unknown")
+                                        && !String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("invalid")) {
+                                    errorCodes.add(1041); // Possible wrong value;
+                                }
+                                break;
+                            default:
+                                break;
+                        }
                         break;
                     case "token":
-                        if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals
-                                (dynamicConfigDAO.findDynamicCondigById(requestJSON.getLong("operatorId")).get().getSessionToken())) {
-                            errorCodes.add(1040); // Wrong value
+                        if (!caseNumber.equals("Case_12")) {
+                            if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals
+                                    (dynamicConfigDAO.findDynamicConfigById(requestJSON.getLong("operatorId")).get().getSessionToken())) {
+                                errorCodes.add(1040); // Wrong value
+                            }
+                        } else {
+                            if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals(requestJSON.get("token"))) {
+                                errorCodes.add(1040); // Wrong value
+                            }
                         }
                         if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
                             errorCodes.add(1030); // Invalid data format
                         }
-                        if (tokenUsed(requestJSON, String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())))) {
-                            errorCodes.add(105); // Token was already used once
-                        }
+//                        if (tokenUsed(requestJSON, String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())))) {
+//                            errorCodes.add(105); // Token was already used once
+//                        }
                         if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
                             errorCodes.add(107); // Value is missing
                         }
@@ -679,10 +1322,20 @@ public class PrepareResult {
                                 errorCodes.add(1030); // Invalid data format
                                 break;
                         }
+                        if (caseNumber.equals("Case_14") || caseNumber.equals("Case_23")) {
+                            if (Double.parseDouble(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != CACHE.get(requestJSON.getLong("operatorId")).get(CACHE.get(requestJSON.optLong("operatorId")).size() - 1)[1] &&
+                                    Double.parseDouble(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != CACHE.get(requestJSON.getLong("operatorId")).get(CACHE.get(requestJSON.optLong("operatorId")).size() - 1)[2]) {
+                                errorCodes.add(1040); // Wrong value
+                            }
+                        } else {
+                            if (Double.parseDouble(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != CACHE.get(requestJSON.getLong("operatorId")).get(CACHE.get(requestJSON.optLong("operatorId")).size() - 1)[1]) {
+                                errorCodes.add(1040); // Wrong value
+                            }
+                        }
                         break;
                     case "currency":
                         if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals
-                                (dynamicConfigDAO.findDynamicCondigById(requestJSON.getLong("operatorId")).get().getCurrency())) {
+                                (dynamicConfigDAO.findDynamicConfigById(requestJSON.getLong("operatorId")).get().getCurrency())) {
                             errorCodes.add(1040); // Wrong value
                         }
                         if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
@@ -700,6 +1353,72 @@ public class PrepareResult {
                         }
                         if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("Integer")) {
                             errorCodes.add(1030); // Invalid data format
+                        }
+                        switch (caseNumber) {
+                            case "Case_2":
+                            case "Case_3":
+                            case "Case_4":
+                            case "Case_5":
+                            case "Case_8.1":
+                            case "Case_8.2":
+                            case "Case_9":
+                            case "Case_10.1":
+                            case "Case_10.2":
+                            case "Case_15":
+                            case "Case_16":
+                            case "Case_17.1":
+                            case "Case_17.2":
+                            case "Case_18.1":
+                            case "Case_19.1":
+                            case "Case_20.1":
+                            case "Case_21.1":
+                            case "Case_22.1":
+                            case "Case_22.2":
+                                if (Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 0) {
+                                    errorCodes.add(106); // Invalid error code
+                                }
+                                break;
+                            case "Case_6":
+                            case "Case_19.2":
+                            case "Case_20.2":
+                            case "Case_21.2":
+                                if (Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 9) {
+                                    errorCodes.add(106); // Invalid error code
+                                }
+                                break;
+                            case "Case_7":
+                            case "Case_14":
+                            case "Case_18.2":
+                            case "Case_22.3":
+                            case "Case_23":
+                                if (Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 1) {
+                                    errorCodes.add(106); // Invalid error code
+                                }
+                                break;
+                            case "Case_11":
+                                if (Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 3) {
+                                    errorCodes.add(106); // Invalid error code
+                                }
+                                break;
+                            case "Case_12":
+                                if (Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 6) {
+                                    errorCodes.add(106); // Invalid error code
+                                }
+                                break;
+                            case "Case_13":
+                                if (Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 7) {
+                                    errorCodes.add(106); // Invalid error code
+                                }
+                                break;
+                            case "Case_24":
+                            case "Case_25":
+                                if (Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 1
+                                        && Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 0) {
+                                    errorCodes.add(106); // Invalid error code
+                                }
+                                break;
+                            default:
+                                break;
                         }
                         break;
                     case "timestamp":
@@ -793,54 +1512,6 @@ public class PrepareResult {
                     errorCodes.add(101); //Key doesn't exist
                 }
             }
-//            if (responseKeys.contains(key)) {
-//                if (errorCodes.size() == 0) {
-//                    if (Arrays.stream(mandatoryKeys).anyMatch(key::equalsIgnoreCase)) {
-//                        errorCodes.add(0);
-//                    } else if (Arrays.stream(optionalKeys).anyMatch(key::equalsIgnoreCase)) {
-//                        errorCodes.add(2);
-//                    }
-//                }
-//            }
-            switch (caseNumber) {
-                case "Case_2":
-                    switch (key) {
-                        case "balance":
-                            if (Double.parseDouble(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != CACHE.get(requestJSON.getLong("operatorId")).get(cacheKeys.get(cacheKeys.size() - 1))[1]) {
-                                errorCodes.add(1040); // Wrong value
-                            }
-                            break;
-                        case "errorcode":
-                            if (Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 0) {
-                                errorCodes.add(106); // Invalid error code
-                            }
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
-                case "Case_3":
-                    switch (key) {
-                        case "balance":
-                            if (Double.parseDouble(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != CACHE.get(requestJSON.getLong("operatorId")).get(cacheKeys.get(cacheKeys.size() - 1))[1]) {
-                                errorCodes.add(1040); // Wrong value
-                            }
-                            break;
-                        case "errorcode":
-                            if (Integer.parseInt(String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) != 0) {
-                                errorCodes.add(106); // Invalid error code
-                            }
-                            break;
-                        case "errordescription":
-                            if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("already")) {
-                                errorCodes.add(1041); // Possible wrong value;
-                            }
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
-            }
             if (responseKeys.contains(key)) {
                 if (errorCodes.size() == 0) {
                     if (Arrays.stream(mandatoryKeys).anyMatch(key::equalsIgnoreCase)) {
@@ -909,7 +1580,14 @@ public class PrepareResult {
                 case 2031:
                     parameterProperties.setMandatory(errorCode == 1031);
                     parameterProperties.setExists(true);
-                    parameterProperties.setErrorState(ERRORSTATE.W);
+//                    if (!parameterProperties.getErrorState().equals(ERRORSTATE.E)) {
+//                        parameterProperties.setErrorState(ERRORSTATE.W);
+//                    }
+                    try {
+                        parameterProperties.setErrorState(parameterProperties.getErrorState().equals(ERRORSTATE.E) ? ERRORSTATE.E : ERRORSTATE.W);
+                    } catch (NullPointerException e) {
+                        parameterProperties.setErrorState(ERRORSTATE.W);
+                    }
                     parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("Key " + key + " has invalid data format.");
                     parameterProperties.setFoundErrors(foundErrors);
@@ -935,7 +1613,12 @@ public class PrepareResult {
                 case 1041:
                     parameterProperties.setMandatory(true);
                     parameterProperties.setExists(true);
-                    parameterProperties.setErrorState(ERRORSTATE.W);
+//                    parameterProperties.setErrorState(ERRORSTATE.W);
+                    try {
+                        parameterProperties.setErrorState(parameterProperties.getErrorState().equals(ERRORSTATE.E) ? ERRORSTATE.E : ERRORSTATE.W);
+                    } catch (NullPointerException e) {
+                        parameterProperties.setErrorState(ERRORSTATE.W);
+                    }
                     parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("Key " + key + " probably has invalid value.");
                     parameterProperties.setFoundErrors(foundErrors);
@@ -985,7 +1668,12 @@ public class PrepareResult {
                 case 3:
                     parameterProperties.setMandatory(false);
                     parameterProperties.setExists(true);
-                    parameterProperties.setErrorState(ERRORSTATE.W);
+//                    parameterProperties.setErrorState(ERRORSTATE.W);
+                    try {
+                        parameterProperties.setErrorState(parameterProperties.getErrorState().equals(ERRORSTATE.E) ? ERRORSTATE.E : ERRORSTATE.W);
+                    } catch (NullPointerException e) {
+                        parameterProperties.setErrorState(ERRORSTATE.W);
+                    }
                     parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("No need to return key " + key + " for this case.");
                     parameterProperties.setFoundErrors(foundErrors);
@@ -998,20 +1686,20 @@ public class PrepareResult {
 
     }
 
-    private String prepareExpectedResponse(String caseNumber, String request, String response) {
+    private String prepareExpectedResponse(String caseNumber, String request, String response, ArrayList<String> cacheKeys) {
         JSONObject responseJSON = new JSONObject(response);
         JSONObject requestJSON = new JSONObject(request);
         HashMap<String, Object> expectedResponseMap = new LinkedHashMap<>();
         String expectedResponseString = "";
         ArrayList<String> responseKeys = new ArrayList<String>(responseJSON.keySet());
-        Optional<OperatorsDynamicConfig> dynamicConfig = dynamicConfigDAO.findDynamicCondigById(requestJSON.optLong("operatorId"));
+        Optional<OperatorsDynamicConfig> dynamicConfig = dynamicConfigDAO.findDynamicConfigById(requestJSON.optLong("operatorId"));
         expectedResponseMap.put("operatorId", requestJSON.optLong("operatorId"));
         switch (caseNumber) {
             case "Case_0":
                 expectedResponseMap.put("uid", dynamicConfig.get().getUid());
                 expectedResponseMap.put("token", dynamicConfig.get().getSessionToken());
                 expectedResponseMap.put("balance", BigDecimal.valueOf(CACHE.get(requestJSON.optLong("operatorId"))
-                        .get(caseNumber)[1]).setScale(2, RoundingMode.HALF_DOWN));
+                        .get(0)[1]).setScale(2, RoundingMode.HALF_DOWN));
                 expectedResponseMap.put("currency", defineExpectedCurrency(dynamicConfig));
                 expectedResponseMap.put("errorCode", 0);
                 expectedResponseMap.put("errorDescription", "OK");
@@ -1049,9 +1737,9 @@ public class PrepareResult {
         expectedResponseMap.put("uid", dynamicConfig.get().getUid());
         expectedResponseMap.put("token", dynamicConfig.get().getSessionToken());
         expectedResponseMap.put("roundId", requestJSON.get("roundId"));
-        expectedResponseMap.put("transactionId", responseJSON.get("transactionId"));
+        expectedResponseMap.put("transactionId", requestJSON.get("transactionId"));
         expectedResponseMap.put("balance", BigDecimal.valueOf(CACHE.get(requestJSON.optLong("operatorId"))
-                .get(caseNumber)[1]).setScale(2, RoundingMode.HALF_DOWN));
+                .get(CACHE.get(requestJSON.optLong("operatorId")).size() - 1)[1]).setScale(2, RoundingMode.HALF_DOWN));
         expectedResponseMap.put("currency", defineExpectedCurrency(dynamicConfig));
         expectedResponseMap.put("timestamp", System.currentTimeMillis());
         if (compareKeysIgnoringCase(optionalKeys[0], responseKeys)) {
@@ -1069,19 +1757,304 @@ public class PrepareResult {
         }
         switch (caseNumber) {
             case "Case_2":
+            case "Case_4":
+            case "Case_8.1":
+            case "Case_8.2":
+            case "Case_10.1":
+            case "Case_10.2":
+            case "Case_15":
+            case "Case_16":
+            case "Case_17.1":
+            case "Case_17.2":
+            case "Case_18.1":
+            case "Case_19.1":
+            case "Case_20.1":
+            case "Case_21.1":
+            case "Case_22.1":
+            case "Case_22.2":
                 expectedResponseMap.put("errorCode", 0);
                 expectedResponseMap.put("errorDescription", "OK");
                 expectedResponseString = gson.toJson(expectedResponseMap);
                 return beautifyJsonString(expectedResponseString);
             case "Case_3":
+            case "Case_5":
+            case "Case_9":
                 expectedResponseMap.put("errorCode", 0);
                 expectedResponseMap.put("errorDescription", "Transaction already processed");
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+            case "Case_6":
+                expectedResponseMap.put("errorCode", 9);
+                expectedResponseMap.put("errorDescription", "Transaction not found");
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+            case "Case_7":
+                expectedResponseMap.put("errorCode", 1);
+                expectedResponseMap.put("errorDescription", "Debit after rollback");
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+            case "Case_11":
+                expectedResponseMap.put("errorCode", 3);
+                expectedResponseMap.put("errorDescription", "Insufficient funds");
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+            case "Case_12":
+                expectedResponseMap.put("errorCode", 6);
+                expectedResponseMap.put("errorDescription", "Token not found");
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+            case "Case_13":
+                expectedResponseMap.put("errorCode", 7);
+                expectedResponseMap.put("errorDescription", "User not found");
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+            case "Case_14":
+                expectedResponseMap.put("errorCode", 1);
+                expectedResponseMap.put("errorDescription", "Negative amount");
+                if (CACHE.get(requestJSON.optLong("operatorId")).get(cacheKeys.size() - 1)[0] == CACHE.get(requestJSON.optLong("operatorId")).get(cacheKeys.size() - 1)[2]) {
+                    expectedResponseMap.remove("balance");
+                    expectedResponseMap.put("balance", BigDecimal.valueOf(CACHE.get(requestJSON.optLong("operatorId"))
+                            .get(cacheKeys.size() - 1)[2]).setScale(2, RoundingMode.HALF_DOWN));
+                }
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+            case "Case_18.2":
+                expectedResponseMap.put("errorCode", 1);
+                expectedResponseMap.put("errorDescription", "Invalid amount");
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+            case "Case_19.2":
+            case "Case_20.2":
+            case "Case_21.2":
+                expectedResponseMap.put("errorCode", 9);
+                expectedResponseMap.put("errorDescription", "Debit transaction ID not found");
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+            case "Case_22.3":
+                expectedResponseMap.put("errorCode", 1);
+                expectedResponseMap.put("errorDescription", "Debit transaction already processed");
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+            case "Case_23":
+                expectedResponseMap.put("errorCode", 1);
+                expectedResponseMap.put("errorDescription", "Invalid hash");
+                if (CACHE.get(requestJSON.optLong("operatorId")).get(cacheKeys.size() - 1)[0] == CACHE.get(requestJSON.optLong("operatorId")).get(cacheKeys.size() - 1)[2]) {
+                    expectedResponseMap.remove("balance");
+                    expectedResponseMap.put("balance", BigDecimal.valueOf(CACHE.get(requestJSON.optLong("operatorId"))
+                            .get(cacheKeys.size() - 1)[2]).setScale(2, RoundingMode.HALF_DOWN));
+                }
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+            case "Case_24":
+                expectedResponseMap.put("errorCode", responseJSON.optInt("errorCode", 1) == 0 ? 0 : 1);
+                expectedResponseMap.put("errorDescription", responseJSON.optInt("errorCode", 1) == 0 ? "OK" : "Unknown Game ID");
+                expectedResponseString = gson.toJson(expectedResponseMap);
+                return beautifyJsonString(expectedResponseString);
+            case "Case_25":
+                expectedResponseMap.put("errorCode", responseJSON.optInt("errorCode", 1) == 0 ? 0 : 1);
+                expectedResponseMap.put("errorDescription", responseJSON.optInt("errorCode", 1) == 0 ? "OK" : "Invalid Bet type");
                 expectedResponseString = gson.toJson(expectedResponseMap);
                 return beautifyJsonString(expectedResponseString);
         }
         return beautifyJsonString(expectedResponseString);
     }
 
+    private void cacheSetup(double returnedBalance, long operatorId, String testCase, ArrayList<String> cacheKeys) {
+        double[] balances = new double[4];
+        balances[0] = returnedBalance;
+        if (balances[0] > 0) {
+            balances[1] = CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[0];
+        } else {
+            balances[1] = CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[1];
+        }
+//        if (testCase.equals("Case_1")) {
+//            balances[1] = 0;
+//        }
+        switch (testCase) {
+            case "Case_1":
+            case "Case_12":
+            case "Case_13":
+            case "Case_14":
+            case "Case_23":
+                balances[1] = 0;
+                balances[3] = CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[3];
+                break;
+            case "Case_2":
+            case "Case_8.1":
+            case "Case_10.1":
+            case "Case_15":
+            case "Case_17.1":
+            case "Case_18.1":
+            case "Case_19.1":
+            case "Case_20.1":
+            case "Case_21.1":
+            case "Case_22.1":
+                if (balances[1] > 0) {
+                    balances[1] = Double.parseDouble(formatMyDouble(balances[1] - debitRequest.getDebitAmount().doubleValue()));
+                } else {
+                    balances[1] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2] - debitRequest.getDebitAmount().doubleValue()));
+                }
+                balances[3] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[3] - debitRequest.getDebitAmount().doubleValue()));
+                break;
+            case "Case_3":
+            case "Case_5":
+            case "Case_6":
+            case "Case_7":
+            case "Case_9":
+            case "Case_10.2":
+            case "Case_11":
+            case "Case_18.2":
+            case "Case_19.2":
+            case "Case_20.2":
+            case "Case_21.2":
+            case "Case_22.3":
+                if (balances[1] == 0) {
+                    balances[1] = CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2];
+                }
+                balances[3] = CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[3];
+                break;
+            case "Case_4":
+                if (balances[1] > 0) {
+                    balances[1] = Double.parseDouble(formatMyDouble(balances[1] + rollbackRequest.getRollbackAmount().doubleValue()));
+                } else {
+                    balances[1] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2] + rollbackRequest.getRollbackAmount().doubleValue()));
+                }
+                balances[3] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[3] + rollbackRequest.getRollbackAmount().doubleValue()));
+                break;
+            case "Case_8.2":
+            case "Case_16":
+            case "Case_17.2":
+            case "Case_22.2":
+                if (balances[1] > 0) {
+                    balances[1] = Double.parseDouble(formatMyDouble(balances[1] + creditRequest.getCreditAmount().doubleValue()));
+                } else {
+                    balances[1] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2] + creditRequest.getCreditAmount().doubleValue()));
+                }
+                balances[3] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[3] + creditRequest.getCreditAmount().doubleValue()));
+                break;
+            case "Case_24":
+            case "Case_25":
+                if (CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[0] == balances[0]) {
+                    if (balances[1] == 0) {
+                        balances[1] = CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2];
+                    }
+                    balances[3] = CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[3];
+                } else {
+                    if (balances[1] > 0) {
+                        balances[1] = Double.parseDouble(formatMyDouble(balances[1] - debitRequest.getDebitAmount().doubleValue()));
+                    } else {
+                        balances[1] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2] - debitRequest.getDebitAmount().doubleValue()));
+                    }
+                    balances[3] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[3] - debitRequest.getDebitAmount().doubleValue()));
+                }
+                break;
+            default:
+                break;
+        }
+        if (balances[1] > 0) {
+            balances[2] = balances[1];
+        } else {
+            balances[2] = CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2];
+            if (testCase.equals("Case_15")) {
+                balances[2] = 0;
+            }
+        }
+        balances[1] = balances[1] < 0 ? 0 : balances[1];
+        balances[2] = balances[2] < 0 ? 0 : balances[2];
+        balances[3] = balances[3] < 0 ? 0 : balances[3];
+
+//        switch (testCase) {
+//            case "Case_1":
+//                balances[1] = 0;
+//                balances[2] = CACHE.get(operatorId).get("Case_0")[2];
+//                balances[3] = CACHE.get(operatorId).get("Case_0")[3];
+//                break;
+//            case "Case_2":
+//            case "Case_8.1":
+//            case "Case_10.1":
+//                if (CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0] <= 0) {
+//                    if (CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[1] != 0) {
+//                        balances[1] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[1] - debitRequest.getDebitAmount().doubleValue()));
+//                    } else {
+//                        balances[1] = 0;
+//                    }
+//                } else {
+//                    balances[1] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0] - debitRequest.getDebitAmount().doubleValue()));
+//                }
+//                balances[2] = balances[1];
+//                balances[3] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[3] - debitRequest.getDebitAmount().doubleValue()));
+//                break;
+//            case "Case_3":
+//                if (CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0] <= 0) {
+//                    if (CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[1] != 0) {
+//                        balances[1] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[1];
+//                    } else {
+//                        balances[1] = 0;
+//                    }
+//                } else {
+//                    balances[1] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0];
+//                }
+//                balances[2] = balances[1];
+//                balances[3] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[3];
+//
+//                break;
+//            case "Case_4":
+//                if (CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0] <= 0) {
+//                    balances[1] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[1] + rollbackRequest.getRollbackAmount().doubleValue()));
+//                } else {
+//                    balances[1] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0] + rollbackRequest.getRollbackAmount().doubleValue()));
+//                }
+//                balances[2] = balances[1];
+//                balances[3] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[3] + rollbackRequest.getRollbackAmount().doubleValue()));
+//
+//                break;
+//            case "Case_5":
+//                balances[1] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[1];
+//                balances[2] = balances[1];
+//                balances[3] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[3];
+//
+//                break;
+//            case "Case_6":
+//            case "Case_7":
+//            case "Case_9":
+//            case "Case_11":
+//                if (CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0] <= 0) {
+//                    balances[1] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[1];
+//                } else {
+//                    balances[1] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0];
+//                }
+//                balances[2] = balances[1];
+//                balances[3] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[3];
+//
+//                break;
+//            case "Case_8.2":
+//            case "Case_10.2":
+//                if (CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0] <= 0) {
+//                    if (CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[1] != 0) {
+//                        balances[1] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[1] + creditRequest.getCreditAmount().doubleValue()));
+//                    } else {
+//                        balances[1] = 0;
+//                    }
+//                } else {
+//                    balances[1] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[0] + creditRequest.getCreditAmount().doubleValue()));
+//                }
+//                balances[2] = balances[1];
+//                balances[3] = Double.parseDouble(formatMyDouble(CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[3] + creditRequest.getCreditAmount().doubleValue()));
+//                break;
+//            case "Case_12":
+//            case "Case_13":
+//                balances[1] = 0;
+//                balances[2] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[2];
+//                balances[3] = CACHE.get(operatorId).get(cacheKeys.get(cacheKeys.size() - 1))[3];
+//                break;
+//            default:
+//                break;
+//        }
+        cacheKeys.add(testCase);
+        CACHE.get(operatorId).add(balances);
+        checkBalances(testCase, operatorId);
+
+    }
 
     private static String defineExpectedCurrency(Optional<OperatorsDynamicConfig> dynamicConfig) {
         String returnedCurrency = dynamicConfig.get().getCurrency();
@@ -1167,6 +2140,14 @@ public class PrepareResult {
                 .replace(",\"", ",\r\n\"").replace("}", "\r\n}");
     }
 
+    private void updateRoundId() {
+        requestCommon.setRoundId(requestCommon.getRoundId() + 1);
+        debitRequest.setRoundId(requestCommon.getRoundId());
+        creditRequest.setRoundId(requestCommon.getRoundId());
+        creditRequestWithoutDebitTransactionId.setRoundId(requestCommon.getRoundId());
+        rollbackRequest.setRoundId(requestCommon.getRoundId());
+    }
+
     private static String generateDebitTransactionId() {
         String transactionId = String.valueOf(UUID.randomUUID());
         transactionId = transactionId.replaceFirst(String.valueOf(transactionId.charAt(0)), "d");
@@ -1184,15 +2165,17 @@ public class PrepareResult {
         return transactionId;
     }
 
-//    private String recordLog(String caseName, long operatorId) {
-//        return logging.logParser(caseName, String.valueOf(operatorId));
-//    }
+    private static String corruptString(String stringToCorrupt) {
+        String result = stringToCorrupt.substring(0, stringToCorrupt.length() / 2) + stringToCorrupt.substring((stringToCorrupt.length() / 2) + 1);
+        result = result.equals("") ? String.valueOf((int) (Math.random() * (999999 - 100000 + 1)) + 100000) : result;
+        return result;
+    }
 
     private static String getLogRecord(String caseName, long operatorId) throws IOException {
         String path = "file/" + operatorId + "_Test_Log.log";
         Charset encoding = StandardCharsets.UTF_8;
         String[] logRecords = readFile(path, encoding).split(caseName);
-        return logRecords[logRecords.length-1];
+        return logRecords[logRecords.length - 1];
     }
 
     private static String readFile(String path, Charset encoding)
@@ -1217,5 +2200,17 @@ public class PrepareResult {
 
         return null;
 
+    }
+
+    private static void checkBalances(String caseName, long operatorId) {
+        // Returned balance
+        // Expected returned balance
+        // Expected calculated balance
+        // Calculated balance
+        System.out.println(caseName);
+        System.out.println("Returned balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[0]);
+        System.out.println("Expected returned balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[1]);
+        System.out.println("Expected calculated balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2]);
+        System.out.println("Calculated balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[3]);
     }
 }

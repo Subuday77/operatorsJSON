@@ -1,9 +1,11 @@
 package com.operatorsJSON.beans.testsRelated;
 
 import org.json.JSONObject;
+import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 @Component
+@Scope(value = "prototype")
 public class AuthenticationRequest {
     private long operatorId;
     private String token;

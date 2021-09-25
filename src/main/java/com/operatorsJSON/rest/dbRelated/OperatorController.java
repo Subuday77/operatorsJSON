@@ -97,6 +97,25 @@ public class OperatorController {
         }
     }
 
+    @GetMapping("/cleartokenhistory")
+    public ResponseEntity<?> clearTokenHistory() {
+        String userName = servletRequest.getHeader("userName");
+        String password = servletRequest.getHeader("password");
+        long operatorId = Long.parseLong(servletRequest.getHeader("operatorId"));
+        if (actionAllowed(userName, password)) {
+            Optional<Operator> operatorToCheck = operatorDAO.findOperatorByOperatorId(operatorId);
+            if (operatorToCheck.isPresent()) {
+                operatorToCheck.get().getUsedTokens().clear();
+                operatorDAO.addOperator(operatorToCheck.get());
+                return new ResponseEntity<>(HttpStatus.OK);
+            } else {
+                return new ResponseEntity<String>("Operator ID " + operatorId + " not found", HttpStatus.NOT_FOUND);
+            }
+        } else {
+            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        }
+    }
+
     @DeleteMapping("/delete")
     public ResponseEntity<?> deleteOperator() {
         String userName = servletRequest.getHeader("userName");
@@ -108,7 +127,7 @@ public class OperatorController {
                 if (operatorToCheck.get().getAddedTo() < 0) {
                     operatorDAO.deleteOperator(operatorToCheck.get());
                     return new ResponseEntity<>(HttpStatus.OK);
-                } else{
+                } else {
                     Optional<Login> loginToEdit = loginDAO.findLoginById(operatorToCheck.get().getAddedTo());
                     List<Operator> tmp = loginToEdit.get().getOperators();
                     loginToEdit.get().getOperators().clear();
@@ -145,9 +164,6 @@ public class OperatorController {
 
     private boolean actionAllowed(String userName, String password) {
         Optional<Login> loginToCheck = loginDAO.findLoginByUserName(userName);
-        if (loginToCheck.isPresent()) {
-            return loginToCheck.get().getPassword().equals(password);
-        }
-        return false;
+        return loginToCheck.map(login -> login.getPassword().equals(password)).orElse(false);
     }
 }
