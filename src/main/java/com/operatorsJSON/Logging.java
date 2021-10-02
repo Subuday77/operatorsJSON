@@ -19,7 +19,8 @@ public class Logging {
 
     public String logParser(String log) {
         if ((log.contains("Case_"))
-                || (log.contains("-->") || log.contains("<--") || log.contains("hash:")) && (!log.contains("END"))) {
+                || (log.contains("-->") || log.contains("<--") || log.contains("hash:"))
+                && (!log.contains("END") && !log.contains("https://ip-checker2000.herokuapp.com/request/send/"))) {
 //            resultToSend.setLog(resultToSend.getLog() + log + "\n");
             logRecord(log, "");
             return log;
@@ -68,19 +69,16 @@ public class Logging {
 //            JSONObject requestJson = new JSONObject(resultToSend.getRequest());
             operatorId = prepareResult.getOperatorInProcess();
         }
-//        if (operatorId.equals(null)) {
-//            System.out.println(operatorId);
-//            JSONObject requestJson = new JSONObject(resultToSend.getRequest());
-//            operatorId = String.valueOf(requestJson.optLong("operatorId"));
-//        }
-        String path = "file/" + operatorId + "_Test_Log.log";
-        try (FileWriter fw = new FileWriter(path, true);
-             BufferedWriter bw = new BufferedWriter(fw);
-             PrintWriter out = new PrintWriter(bw)) {
-            out.println(log);
+        if (operatorId != null && !log.contains("145.239.222.15")) {
+            String path = "file\\" + operatorId + "_Test_Log.log";
+            try (FileWriter fw = new FileWriter(path, true);
+                 BufferedWriter bw = new BufferedWriter(fw);
+                 PrintWriter out = new PrintWriter(bw)) {
+                out.println(log);
 
-        } catch (IOException e) {
-            System.out.println("Can't create log");
+            } catch (IOException e) {
+                System.out.println("Can't create log");
+            }
         }
     }
 }

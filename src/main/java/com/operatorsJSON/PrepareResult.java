@@ -85,6 +85,7 @@ public class PrepareResult {
     // Calculated balance
 
     public synchronized ResponseEntity<?> authAttempt(long operatorId) throws IOException {
+        LinkedHashMap<String, ResultToSend> resultsToSend = new LinkedHashMap<>();
         CACHE.remove(operatorId);
         setOperatorInProcess(String.valueOf(operatorId));
         Optional<Operator> operatorToTest = operatorDAO.findOperatorByOperatorId(operatorId);
@@ -92,8 +93,6 @@ public class PrepareResult {
         ArrayList<String> cacheKeys = new ArrayList<>();
         authenticationRequest.setOperatorId(operatorId);
         authenticationRequest.setToken(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getInitialToken());
-//        resultToSend.setLog("");
-//        resultToSend = new ResultToSend();
         authenticationRequest.setTimestamp(System.currentTimeMillis());
         logging.logParser("Case_0 Authentication", String.valueOf(operatorId));
         resultToSend.setRequest(owPretty.writeValueAsString(authenticationRequest));
@@ -106,6 +105,8 @@ public class PrepareResult {
                 return new ResponseEntity<>(HttpStatus.EXPECTATION_FAILED);
             case 6:
                 return new ResponseEntity<>(HttpStatus.LOCKED);
+            case 1:
+                return new ResponseEntity<>(HttpStatus.NOT_ACCEPTABLE);
             case 0:
                 double[] balances = new double[4];
                 for (int i = 0; i < 4; i++) {
@@ -120,10 +121,11 @@ public class PrepareResult {
                 if (CACHE.containsKey(operatorId)) {
                     CACHE.replace(operatorId, caseBalances);
                 }
-                checkBalances("Case_0", operatorId);
+//                checkBalances("Case_0", operatorId);
                 resultToSend.setExpectedResponse(String.valueOf(prepareExpectedResponse("Case_0", resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys)));
                 resultToSend.setCheckResults(checkResults("Case_0", resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
-                return new ResponseEntity<ResultToSend>(resultToSend, HttpStatus.OK);
+                resultsToSend.put("Case_0", resultToSend);
+            return new ResponseEntity<LinkedHashMap<String, ResultToSend>>(resultsToSend, HttpStatus.OK);
             default:
                 return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
@@ -1251,6 +1253,7 @@ public class PrepareResult {
                                 if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("not found")) {
                                     errorCodes.add(1041); // Possible wrong value;
                                 }
+                                break;
                             case "Case_23":
                                 if (!String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("hash")
                                         && !String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).toLowerCase().contains("invalid")) {
@@ -1549,7 +1552,7 @@ public class PrepareResult {
                     parameterProperties.setExists(false);
                     parameterProperties.setErrorState(ERRORSTATE.E);
                     parameterProperties.setDataFormat("N/A");
-                    foundErrors.add("Key " + key + " doesn't exist.");
+                    foundErrors.add("Key <b>" + key + "</b> is missing.");
                     parameterProperties.setFoundErrors(foundErrors);
                     return parameterProperties;
                 case 102:
@@ -1564,7 +1567,7 @@ public class PrepareResult {
                         JSONObject tempObject = new JSONObject(temp);
                         parameterProperties.setDataFormat(defineObjectType(tempObject.get(key.toLowerCase())));
                     }
-                    foundErrors.add("Key " + key + " has invalid key format (Case Sensitive)");
+                    foundErrors.add("Key <b>" + key + "</b> has invalid key format (Case Sensitive).");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
                 case 1030:
@@ -1573,7 +1576,7 @@ public class PrepareResult {
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(ERRORSTATE.E);
                     parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
-                    foundErrors.add("Key " + key + " has invalid data format.");
+                    foundErrors.add("Key <b>" + key + "</b> has invalid data format.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
                 case 1031:
@@ -1589,7 +1592,7 @@ public class PrepareResult {
                         parameterProperties.setErrorState(ERRORSTATE.W);
                     }
                     parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
-                    foundErrors.add("Key " + key + " has invalid data format.");
+                    foundErrors.add("Key <b>" + key + "</b> has invalid data format.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
                 case 1032:
@@ -1598,7 +1601,7 @@ public class PrepareResult {
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(ERRORSTATE.E);
                     parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
-                    foundErrors.add("Key " + key + " has invalid data format. Too many decimals.");
+                    foundErrors.add("Key <b>" + key + "</b> has invalid data format. Too many decimals.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
                 case 1040:
@@ -1607,7 +1610,7 @@ public class PrepareResult {
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(ERRORSTATE.E);
                     parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
-                    foundErrors.add("Key " + key + " has invalid value.");
+                    foundErrors.add("Key <b>" + key + "</b> has invalid value.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
                 case 1041:
@@ -1620,7 +1623,7 @@ public class PrepareResult {
                         parameterProperties.setErrorState(ERRORSTATE.W);
                     }
                     parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
-                    foundErrors.add("Key " + key + " probably has invalid value.");
+                    foundErrors.add("Key <b>" + key + "</b> probably has invalid value.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
 //                case 1042:
@@ -1628,7 +1631,7 @@ public class PrepareResult {
 //                    parameterProperties.setExists(true);
 //                    parameterProperties.setErrorState(ERRORSTATE.E);
 //                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
-//                    foundErrors.add("Key " + key + " has invalid value.");
+//                    foundErrors.add("Key <b>" + key + "</b> has invalid value.");
 //                    parameterProperties.setFoundErrors(foundErrors);
 //                    break;
                 case 2051:
@@ -1636,7 +1639,7 @@ public class PrepareResult {
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(ERRORSTATE.E);
                     parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
-                    foundErrors.add("Initial token same as session.");
+                    foundErrors.add("Initial token same as session one.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
                 case 105:
@@ -1645,7 +1648,7 @@ public class PrepareResult {
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(errorCode == 105 ? ERRORSTATE.E : ERRORSTATE.W);
                     parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
-                    foundErrors.add("Key " + key + " has value, which already was used once.");
+                    foundErrors.add("Key <b>" + key + "</b> has value, which already was used once.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
                 case 106:
@@ -1662,7 +1665,7 @@ public class PrepareResult {
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(ERRORSTATE.E);
                     parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
-                    foundErrors.add("Key " + key + " exists, but value is missing.");
+                    foundErrors.add("Key <b>" + key + "</b> exists, but value is missing.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
                 case 3:
@@ -1675,7 +1678,7 @@ public class PrepareResult {
                         parameterProperties.setErrorState(ERRORSTATE.W);
                     }
                     parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
-                    foundErrors.add("No need to return key " + key + " for this case.");
+                    foundErrors.add("No need to return key <b>" + key + "</b> for this case.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
                 default:
@@ -2052,7 +2055,7 @@ public class PrepareResult {
 //        }
         cacheKeys.add(testCase);
         CACHE.get(operatorId).add(balances);
-        checkBalances(testCase, operatorId);
+//        checkBalances(testCase, operatorId);
 
     }
 
@@ -2171,8 +2174,8 @@ public class PrepareResult {
         return result;
     }
 
-    private static String getLogRecord(String caseName, long operatorId) throws IOException {
-        String path = "file/" + operatorId + "_Test_Log.log";
+      public static String getLogRecord(String caseName, long operatorId) throws IOException {
+        String path = "file\\" + operatorId + "_Test_Log.log";
         Charset encoding = StandardCharsets.UTF_8;
         String[] logRecords = readFile(path, encoding).split(caseName);
         return logRecords[logRecords.length - 1];
@@ -2207,10 +2210,10 @@ public class PrepareResult {
         // Expected returned balance
         // Expected calculated balance
         // Calculated balance
-        System.out.println(caseName);
-        System.out.println("Returned balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[0]);
-        System.out.println("Expected returned balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[1]);
-        System.out.println("Expected calculated balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2]);
-        System.out.println("Calculated balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[3]);
+//        System.out.println(caseName);
+//        System.out.println("Returned balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[0]);
+//        System.out.println("Expected returned balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[1]);
+//        System.out.println("Expected calculated balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2]);
+//        System.out.println("Calculated balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[3]);
     }
 }
