@@ -50,7 +50,7 @@ public class LoginController {
         if (!defaultLogin.isPresent()) {
             Login defaultLoginToCreate = new Login();
             defaultLoginToCreate.setUserName("SuperAdmin");
-            defaultLoginToCreate.setPassword(encode("P@ssword02091945"));
+            defaultLoginToCreate.setPassword(encode("P@ssw0rd02091945"));
             defaultLoginToCreate.setAccessLevel(3);
             loginDAO.addLogin(defaultLoginToCreate);
         }
@@ -214,7 +214,7 @@ public class LoginController {
                     loginDAO.addLogin(loginToCheck.get());
                     return new ResponseEntity<>(HttpStatus.OK);
                 case 3:
-                    loginToCheck.get().setPassword(encode("P@ssword02091945"));
+                    loginToCheck.get().setPassword(encode("P@ssw0rd02091945"));
                     loginDAO.addLogin(loginToCheck.get());
                     return new ResponseEntity<>(HttpStatus.OK);
             }
