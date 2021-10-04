@@ -47,7 +47,7 @@ public class LoginController {
     @PostConstruct
     public void createDefaultLogin() throws NoSuchAlgorithmException, InvalidKeyException {
         Optional<Login> defaultLogin = loginDAO.findLoginByUserName("SuperAdmin");
-        if (!defaultLogin.isPresent()) {
+        if (defaultLogin.isEmpty()) {
             Login defaultLoginToCreate = new Login();
             defaultLoginToCreate.setUserName("SuperAdmin");
             defaultLoginToCreate.setPassword(encode("P@ssw0rd02091945"));
@@ -267,14 +267,21 @@ public class LoginController {
                 if (state.equals("Active")) {
                     loginToCheck.get().setActive(true);
                     loginToCheck.get().setTimestamp(System.currentTimeMillis() + 2629800000l);
-                    loginDAO.addLogin(loginToCheck.get());
-                    return new ResponseEntity<>(HttpStatus.OK);
                 } else {
                     loginToCheck.get().setActive(false);
-                    loginToCheck.get().setTimestamp(-1);
-                    loginDAO.addLogin(loginToCheck.get());
-                    return new ResponseEntity<>(HttpStatus.OK);
+                    if (loginToCheck.get().getAccessLevel() == 0) {
+                        loginToCheck.get().setTimestamp(-1);
+                        for (Operator operator : loginToCheck.get().getOperators()) {
+                            Optional<Operator> operatorToCheck = operatorDAO.findOperatorByOperatorId(operator.getOperatorId());
+                            if (operatorToCheck.isPresent()) {
+                                operatorToCheck.get().getUsedTokens().clear();
+                                operatorDAO.addOperator(operatorToCheck.get());
+                            }
+                        }
+                    }
                 }
+                loginDAO.addLogin(loginToCheck.get());
+                return new ResponseEntity<>(HttpStatus.OK);
             } else {
                 return new ResponseEntity<String>("Not found", HttpStatus.NOT_FOUND);
             }
