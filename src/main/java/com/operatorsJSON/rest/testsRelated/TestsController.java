@@ -136,7 +136,8 @@ public class TestsController {
             return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
         }
         String fileName = operatorId + "_Test_Log.log";
-        File file = new File("files\\" + fileName);
+        File file = new File("file\\" + fileName);
+        System.out.println(file);
         if (file.exists()) {
             Path path = Paths.get(file.getAbsolutePath());
             ByteArrayResource resource = new ByteArrayResource(Files.readAllBytes(path));
