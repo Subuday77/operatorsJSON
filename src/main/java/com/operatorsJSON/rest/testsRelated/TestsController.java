@@ -9,12 +9,19 @@ import com.operatorsJSON.beans.dbRelated.Login;
 import com.operatorsJSON.beans.dbRelated.Operator;
 import com.operatorsJSON.beans.dbRelated.OperatorsDynamicConfig;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import javax.servlet.http.HttpServletRequest;
+import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 
 @RestController
@@ -118,6 +125,27 @@ public class TestsController {
             return new ResponseEntity<String>("Operator not found.", HttpStatus.NOT_FOUND);
         }
         return prepareResult.testFlow(operatorId, casesList);
+    }
+
+    @GetMapping("/getfile")
+    public ResponseEntity<?> getFile() throws IOException {
+        String userName = servletRequest.getHeader("userName");
+        String password = servletRequest.getHeader("password");
+        String operatorId = servletRequest.getHeader("operatorId");
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        }
+        String fileName = operatorId + "_Test_Log.log";
+        File file = new File("files/" + fileName);
+        if (file.exists()) {
+            Path path = Paths.get(file.getAbsolutePath());
+            ByteArrayResource resource = new ByteArrayResource(Files.readAllBytes(path));
+            HttpHeaders headers = new HttpHeaders();
+                headers.add(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + fileName);
+                return ResponseEntity.ok().headers(headers).contentLength(file.length())
+                        .contentType(MediaType.TEXT_PLAIN).body(resource);
+        }
+        return new ResponseEntity<String>("File not found", HttpStatus.NOT_FOUND);
     }
 
     private boolean actionAllowed(String userName, String password) {

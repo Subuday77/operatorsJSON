@@ -20,7 +20,10 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import java.io.BufferedWriter;
+import java.io.FileWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.Charset;
@@ -87,6 +90,7 @@ public class PrepareResult {
     public synchronized ResponseEntity<?> authAttempt(long operatorId) throws IOException {
         LinkedHashMap<String, ResultToSend> resultsToSend = new LinkedHashMap<>();
         CACHE.remove(operatorId);
+        clearLog(operatorId);
         setOperatorInProcess(String.valueOf(operatorId));
         Optional<Operator> operatorToTest = operatorDAO.findOperatorByOperatorId(operatorId);
         String baseUrl = operatorToTest.get().getOperatorUrl() + operatorToTest.get().getContextRootName();
@@ -125,7 +129,7 @@ public class PrepareResult {
                 resultToSend.setExpectedResponse(String.valueOf(prepareExpectedResponse("Case_0", resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys)));
                 resultToSend.setCheckResults(checkResults("Case_0", resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
                 resultsToSend.put("Case_0", resultToSend);
-            return new ResponseEntity<LinkedHashMap<String, ResultToSend>>(resultsToSend, HttpStatus.OK);
+                return new ResponseEntity<LinkedHashMap<String, ResultToSend>>(resultsToSend, HttpStatus.OK);
             default:
                 return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
@@ -2088,11 +2092,23 @@ public class PrepareResult {
         return result;
     }
 
-      public static String getLogRecord(String caseName, long operatorId) throws IOException {
-        String path = "file\\" + operatorId + "_Test_Log.log";
+    public static String getLogRecord(String caseName, long operatorId) throws IOException {
+        String path = "file/" + operatorId + "_Test_Log.log";
         Charset encoding = StandardCharsets.UTF_8;
         String[] logRecords = readFile(path, encoding).split(caseName);
         return logRecords[logRecords.length - 1];
+    }
+
+    public static void clearLog(long operatorId) {
+        String path = "file/" + operatorId + "_Test_Log.log";
+        try (FileWriter fw = new FileWriter(path, false);
+             BufferedWriter bw = new BufferedWriter(fw);
+             PrintWriter out = new PrintWriter(bw)) {
+            out.println("");
+
+        } catch (IOException e) {
+            System.out.println("Can't clear log");
+        }
     }
 
     private static String readFile(String path, Charset encoding)
