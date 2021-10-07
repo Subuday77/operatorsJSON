@@ -2093,14 +2093,14 @@ public class PrepareResult {
     }
 
     public static String getLogRecord(String caseName, long operatorId) throws IOException {
-        String path = "file/" + operatorId + "_Test_Log.log";
+        String path = "file\\" + operatorId + "_Test_Log.log";
         Charset encoding = StandardCharsets.UTF_8;
         String[] logRecords = readFile(path, encoding).split(caseName);
         return logRecords[logRecords.length - 1];
     }
 
     public static void clearLog(long operatorId) {
-        String path = "file/" + operatorId + "_Test_Log.log";
+        String path = "file\\" + operatorId + "_Test_Log.log";
         try (FileWriter fw = new FileWriter(path, false);
              BufferedWriter bw = new BufferedWriter(fw);
              PrintWriter out = new PrintWriter(bw)) {

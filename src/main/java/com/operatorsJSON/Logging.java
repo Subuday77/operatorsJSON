@@ -70,7 +70,7 @@ public class Logging {
             operatorId = prepareResult.getOperatorInProcess();
         }
         if (operatorId != null && !log.contains("145.239.222.15")) {
-            String path = "file/" + operatorId + "_Test_Log.log";
+            String path = "file\\" + operatorId + "_Test_Log.log";
             try (FileWriter fw = new FileWriter(path, true);
                  BufferedWriter bw = new BufferedWriter(fw);
                  PrintWriter out = new PrintWriter(bw)) {
