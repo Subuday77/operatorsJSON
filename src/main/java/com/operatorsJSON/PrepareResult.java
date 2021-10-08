@@ -1819,17 +1819,19 @@ public class PrepareResult {
             case "Case_12":
                 expectedResponseMap.put("errorCode", 6);
                 expectedResponseMap.put("errorDescription", "Token not found");
+                expectedResponseMap.replace("token", requestJSON.get("token"));
                 expectedResponseString = gson.toJson(expectedResponseMap);
                 return beautifyJsonString(expectedResponseString);
             case "Case_13":
                 expectedResponseMap.put("errorCode", 7);
                 expectedResponseMap.put("errorDescription", "User not found");
+                expectedResponseMap.replace("uid", requestJSON.get("uid"));
                 expectedResponseString = gson.toJson(expectedResponseMap);
                 return beautifyJsonString(expectedResponseString);
             case "Case_14":
                 expectedResponseMap.put("errorCode", 1);
                 expectedResponseMap.put("errorDescription", "Negative amount");
-                if (CACHE.get(requestJSON.optLong("operatorId")).get(cacheKeys.size() - 1)[0] == CACHE.get(requestJSON.optLong("operatorId")).get(cacheKeys.size() - 1)[2]) {
+                if (CACHE.get(requestJSON.optLong("operatorId")).get(cacheKeys.size() - 1)[0] != 0) {
                     expectedResponseMap.remove("balance");
                     expectedResponseMap.put("balance", BigDecimal.valueOf(CACHE.get(requestJSON.optLong("operatorId"))
                             .get(cacheKeys.size() - 1)[2]).setScale(2, RoundingMode.HALF_DOWN));
