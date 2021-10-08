@@ -1119,6 +1119,8 @@ public class PrepareResult {
                                     errorCodes.add(1041); // Possible wrong value;
                                 }
                                 break;
+                            default:
+                                break;
                         }
                     } else {
                         if (Arrays.stream(unsuccessfulAuthMandatoryKeys).anyMatch(key::equalsIgnoreCase)) {
@@ -1541,13 +1543,22 @@ public class PrepareResult {
         ParameterProperties parameterProperties = new ParameterProperties();
         ArrayList<String> foundErrors = new ArrayList<>();
         for (int errorCode : errorCodes) {
+            if (errorCode != 101) {
+                try {
+                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+                } catch (JSONException e) {
+                    String temp = String.valueOf(responseJSON).toLowerCase();
+                    JSONObject tempObject = new JSONObject(temp);
+                    parameterProperties.setDataFormat(defineObjectType(tempObject.get(key.toLowerCase())));
+                }
+            }
             switch (errorCode) {
                 case 0:
                 case 2:
                     parameterProperties.setMandatory(errorCode == 0);
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(ERRORSTATE.OK);
-                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+//                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("No errors found");
                     parameterProperties.setFoundErrors(foundErrors);
                     return parameterProperties;
@@ -1564,13 +1575,13 @@ public class PrepareResult {
                     parameterProperties.setMandatory(errorCode == 102);
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(ERRORSTATE.E);
-                    try {
-                        parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
-                    } catch (JSONException e) {
-                        String temp = String.valueOf(responseJSON).toLowerCase();
-                        JSONObject tempObject = new JSONObject(temp);
-                        parameterProperties.setDataFormat(defineObjectType(tempObject.get(key.toLowerCase())));
-                    }
+//                    try {
+//                        parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+//                    } catch (JSONException e) {
+//                        String temp = String.valueOf(responseJSON).toLowerCase();
+//                        JSONObject tempObject = new JSONObject(temp);
+//                        parameterProperties.setDataFormat(defineObjectType(tempObject.get(key.toLowerCase())));
+//                    }
                     foundErrors.add("Key <b>" + key + "</b> has invalid key format (Case Sensitive).");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
@@ -1579,7 +1590,7 @@ public class PrepareResult {
                     parameterProperties.setMandatory(errorCode == 1030);
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(ERRORSTATE.E);
-                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+//                    parameterProperties.setDataFormat(defineObjectType(responseJSON.opt(key)));
                     foundErrors.add("Key <b>" + key + "</b> has invalid data format.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
@@ -1595,7 +1606,7 @@ public class PrepareResult {
                     } catch (NullPointerException e) {
                         parameterProperties.setErrorState(ERRORSTATE.W);
                     }
-                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+//                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("Key <b>" + key + "</b> has invalid data format.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
@@ -1604,7 +1615,7 @@ public class PrepareResult {
                     parameterProperties.setMandatory(errorCode == 1032);
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(ERRORSTATE.E);
-                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+//                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("Key <b>" + key + "</b> has invalid data format. Too many decimals.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
@@ -1613,7 +1624,7 @@ public class PrepareResult {
                     parameterProperties.setMandatory(errorCode == 1040);
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(ERRORSTATE.E);
-                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+//                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("Key <b>" + key + "</b> has invalid value.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
@@ -1626,7 +1637,7 @@ public class PrepareResult {
                     } catch (NullPointerException e) {
                         parameterProperties.setErrorState(ERRORSTATE.W);
                     }
-                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+//                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("Key <b>" + key + "</b> probably has invalid value.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
@@ -1642,7 +1653,7 @@ public class PrepareResult {
                     parameterProperties.setMandatory(false);
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(ERRORSTATE.E);
-                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+//                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("Initial token same as session one.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
@@ -1651,7 +1662,7 @@ public class PrepareResult {
                     parameterProperties.setMandatory(errorCode == 105);
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(errorCode == 105 ? ERRORSTATE.E : ERRORSTATE.W);
-                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+//                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("Key <b>" + key + "</b> has value, which already was used once.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
@@ -1659,7 +1670,7 @@ public class PrepareResult {
                     parameterProperties.setMandatory(true);
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(ERRORSTATE.E);
-                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+//                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("Not expected error code.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
@@ -1668,7 +1679,7 @@ public class PrepareResult {
                     parameterProperties.setMandatory(errorCode == 107);
                     parameterProperties.setExists(true);
                     parameterProperties.setErrorState(ERRORSTATE.E);
-                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+//                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("Key <b>" + key + "</b> exists, but value is missing.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
@@ -1681,7 +1692,7 @@ public class PrepareResult {
                     } catch (NullPointerException e) {
                         parameterProperties.setErrorState(ERRORSTATE.W);
                     }
-                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
+//                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("No need to return key <b>" + key + "</b> for this case.");
                     parameterProperties.setFoundErrors(foundErrors);
                     break;
