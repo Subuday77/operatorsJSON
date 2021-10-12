@@ -16,6 +16,7 @@ import javax.servlet.http.HttpServletRequest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import static com.operatorsJSON.beans.Constants.*;
 
 
 @RestController
@@ -148,6 +149,24 @@ public class OperatorController {
         } else {
             return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
         }
+    }
+
+    @GetMapping ("/checkcache")
+    public ResponseEntity<?> checkIfCacheExists() {
+        String userName = servletRequest.getHeader("userName");
+        String password = servletRequest.getHeader("password");
+        long operatorId = Long.parseLong(servletRequest.getHeader("operatorId"));
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        }
+        try {
+            if (!CACHE.get(operatorId).isEmpty()) {
+                return new ResponseEntity<Boolean>(true,HttpStatus.OK);
+            }
+        } catch (NullPointerException e) {
+            return new ResponseEntity<Boolean>(false, HttpStatus.OK);
+        }
+        return new ResponseEntity<Boolean>(false, HttpStatus.OK);
     }
 
 //    @DeleteMapping("/deleteall")

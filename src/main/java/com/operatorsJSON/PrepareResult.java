@@ -105,6 +105,8 @@ public class PrepareResult {
         resultToSend.setLog(getLogRecord("Case_0", operatorId));
         int errorCode = setupDynamicConfig(resultToSend.getResponse(), operatorId);
         switch (errorCode) {
+            case -2:
+                return new ResponseEntity<>(HttpStatus.GONE);
             case -1:
                 return new ResponseEntity<>(HttpStatus.EXPECTATION_FAILED);
             case 6:
@@ -786,10 +788,14 @@ public class PrepareResult {
         Optional<OperatorsDynamicConfig> dynamicConfig = dynamicConfigDAO.findDynamicConfigById(id);
         int errorCode = responseJSON.optInt("errorCode", -1);
         if (errorCode == 0) {
-            dynamicConfig.get().setSessionToken(responseJSON.optString("token"));
-            dynamicConfig.get().setUid(responseJSON.optString("uid"));
-            dynamicConfig.get().setCurrency(responseJSON.optString("currency"));
-            dynamicConfig.get().setInitialBalance(responseJSON.optDouble("balance", 0));
+            try {
+                dynamicConfig.get().setSessionToken(responseJSON.getString("token"));
+                dynamicConfig.get().setUid(responseJSON.getString("uid"));
+                dynamicConfig.get().setCurrency(responseJSON.getString("currency"));
+                dynamicConfig.get().setInitialBalance(responseJSON.getDouble("balance"));
+            } catch (JSONException e) {
+                errorCode = -2;
+            }
             dynamicConfig.get().setBasicBetAmount(1.01);
             dynamicConfigDAO.addDynamicConfig(dynamicConfig.get());
         }

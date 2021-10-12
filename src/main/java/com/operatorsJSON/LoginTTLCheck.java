@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Date;
 import java.util.Optional;
+import static com.operatorsJSON.beans.Constants.*;
 
 @Component
 @EnableAsync
@@ -37,6 +38,7 @@ public class LoginTTLCheck {
                     if (operatorToCheck.isPresent()) {
                         operatorToCheck.get().getUsedTokens().clear();
                         operatorDAO.addOperator(operatorToCheck.get());
+                        CACHE.remove(operatorToCheck.get().getOperatorId());
                     }
                 }
             }
