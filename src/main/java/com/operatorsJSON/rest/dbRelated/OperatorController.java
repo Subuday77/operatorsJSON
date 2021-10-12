@@ -3,6 +3,7 @@ package com.operatorsJSON.rest.dbRelated;
 import com.operatorsJSON.DAO.dbRelated.LoginDAO;
 import com.operatorsJSON.DAO.dbRelated.OperatorDAO;
 import com.operatorsJSON.DAO.dbRelated.OperatorsDynamicConfigDAO;
+import com.operatorsJSON.PrepareResult;
 import com.operatorsJSON.beans.dbRelated.Login;
 import com.operatorsJSON.beans.dbRelated.Operator;
 import com.operatorsJSON.beans.dbRelated.OperatorsDynamicConfig;
@@ -108,6 +109,40 @@ public class OperatorController {
             if (operatorToCheck.isPresent()) {
                 operatorToCheck.get().getUsedTokens().clear();
                 operatorDAO.addOperator(operatorToCheck.get());
+                return new ResponseEntity<>(HttpStatus.OK);
+            } else {
+                return new ResponseEntity<String>("Operator ID " + operatorId + " not found", HttpStatus.NOT_FOUND);
+            }
+        } else {
+            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        }
+    }
+ @GetMapping("/clearlogs")
+    public ResponseEntity<?> clearLogs() {
+        String userName = servletRequest.getHeader("userName");
+        String password = servletRequest.getHeader("password");
+        long operatorId = Long.parseLong(servletRequest.getHeader("operatorId"));
+        if (actionAllowed(userName, password)) {
+            Optional<Operator> operatorToCheck = operatorDAO.findOperatorByOperatorId(operatorId);
+            if (operatorToCheck.isPresent()) {
+                PrepareResult.clearLog(operatorId);
+                return new ResponseEntity<>(HttpStatus.OK);
+            } else {
+                return new ResponseEntity<String>("Operator ID " + operatorId + " not found", HttpStatus.NOT_FOUND);
+            }
+        } else {
+            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        }
+    }
+ @GetMapping("/clearcache")
+    public ResponseEntity<?> clearCache() {
+        String userName = servletRequest.getHeader("userName");
+        String password = servletRequest.getHeader("password");
+        long operatorId = Long.parseLong(servletRequest.getHeader("operatorId"));
+        if (actionAllowed(userName, password)) {
+            Optional<Operator> operatorToCheck = operatorDAO.findOperatorByOperatorId(operatorId);
+            if (operatorToCheck.isPresent()) {
+                CACHE.remove(operatorId);
                 return new ResponseEntity<>(HttpStatus.OK);
             } else {
                 return new ResponseEntity<String>("Operator ID " + operatorId + " not found", HttpStatus.NOT_FOUND);
