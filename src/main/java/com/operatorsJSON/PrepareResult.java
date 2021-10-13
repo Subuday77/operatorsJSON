@@ -1960,7 +1960,7 @@ public class PrepareResult {
                 break;
             case "Case_24":
             case "Case_25":
-                if (CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[0] == balances[0]) {
+                if (CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[0] == balances[0] || CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2] == balances[0]) {
                     if (balances[1] == 0) {
                         balances[1] = CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2];
                     }
