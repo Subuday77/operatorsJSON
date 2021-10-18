@@ -163,7 +163,7 @@ public class RequestCommon {
         setOperatorId(operatorId);
         setToken(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getSessionToken());
         setUid(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getUid());
-        setRoundId((int) (Math.random() * (999999 - 100000 + 1)) + 100000);
+        setRoundId(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getStartingRound());
         setCurrency(dynamicConfigDAO.findDynamicConfigById(operatorId).get().getCurrency());
     }
 }

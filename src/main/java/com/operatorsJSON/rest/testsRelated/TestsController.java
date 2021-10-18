@@ -8,6 +8,7 @@ import com.operatorsJSON.PrepareResult;
 import com.operatorsJSON.beans.dbRelated.Login;
 import com.operatorsJSON.beans.dbRelated.Operator;
 import com.operatorsJSON.beans.dbRelated.OperatorsDynamicConfig;
+import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpHeaders;
@@ -23,6 +24,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+
+import static com.operatorsJSON.beans.Constants.CACHE;
 
 @RestController
 @CrossOrigin(origins = "*")
@@ -46,6 +49,8 @@ public class TestsController {
         String password = servletRequest.getHeader("password");
         String initialToken = servletRequest.getHeader("initialToken");
         long operatorId = Long.parseLong(servletRequest.getHeader("operatorId"));
+        boolean isAdvanced = Boolean.parseBoolean(servletRequest.getHeader("isAdvanced"));
+        JSONObject dynamicConfigJSON = new JSONObject(servletRequest.getHeader("dynamicConfig"));
         if (!actionAllowed(userName, password)) {
             return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
         }
@@ -55,6 +60,18 @@ public class TestsController {
         }
         Optional<OperatorsDynamicConfig> dynamicConfig = dynamicConfigDAO.findDynamicConfigById(operatorId);
         dynamicConfig.get().setInitialToken(initialToken);
+        if (dynamicConfigJSON.optString("startingRound").equals("")) {
+            dynamicConfigJSON.remove("startingRound");
+        }
+        long startingRound = Long.parseLong(dynamicConfigJSON.optString("startingRound", String.valueOf((int) (Math.random() * (999999 - 100000 + 1)) + 100000)));
+        dynamicConfig.get().setStartingRound(startingRound);
+        boolean onlyWholeNumbers = (dynamicConfigJSON.getBoolean("onlyWholeNumbers"));
+        dynamicConfig.get().setOnlyWholeNumbers(onlyWholeNumbers);
+        if (dynamicConfigJSON.optString("basicBetAmount").equals("")) {
+            dynamicConfigJSON.remove("basicBetAmount");
+        }
+        double basicBetAmount = Double.parseDouble(dynamicConfigJSON.optString("basicBetAmount", String.valueOf(onlyWholeNumbers ? 1 : 1.01)));
+        dynamicConfig.get().setBasicBetAmount(basicBetAmount);
         dynamicConfigDAO.addDynamicConfig(dynamicConfig.get());
         return prepareResult.authAttempt(operatorId);
     }
@@ -117,6 +134,8 @@ public class TestsController {
         String userName = servletRequest.getHeader("userName");
         String password = servletRequest.getHeader("password");
         long operatorId = Long.parseLong(servletRequest.getHeader("operatorId"));
+        boolean isAdvanced = Boolean.parseBoolean(servletRequest.getHeader("isAdvanced"));
+        JSONObject dynamicConfigJSON = new JSONObject(servletRequest.getHeader("dynamicConfig"));
         if (!actionAllowed(userName, password)) {
             return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
         }
@@ -124,6 +143,41 @@ public class TestsController {
         if (operatorToTest.isEmpty()) {
             return new ResponseEntity<String>("Operator not found.", HttpStatus.NOT_FOUND);
         }
+        Optional<OperatorsDynamicConfig> dynamicConfig = dynamicConfigDAO.findDynamicConfigById(operatorId);
+        if (isAdvanced) {
+            if (dynamicConfigJSON.getBoolean("tokenUsed")) {
+                String initialToken = servletRequest.getHeader("initialToken");
+                dynamicConfig.get().setInitialToken(initialToken);
+                dynamicConfig.get().setSessionToken(dynamicConfigJSON.getString("sessionToken"));
+                dynamicConfig.get().setUid(dynamicConfigJSON.getString("uid"));
+                dynamicConfig.get().setInitialBalance(dynamicConfigJSON.getDouble("initialBalance"));
+                dynamicConfig.get().setCurrency(dynamicConfigJSON.getString("currency"));
+                CACHE.remove(operatorId);
+                double[] balances = new double[4];
+                for (int i = 0; i < 4; i++) {
+                    balances[i] = dynamicConfigJSON.getDouble("initialBalance");
+                }
+                ArrayList<double[]> caseBalances = new ArrayList<>();
+                caseBalances.add(balances);
+                CACHE.put(operatorId, caseBalances);
+                if (CACHE.containsKey(operatorId)) {
+                    CACHE.replace(operatorId, caseBalances);
+                }
+            }
+        }
+        if (dynamicConfigJSON.optString("startingRound").equals("")) {
+            dynamicConfigJSON.remove("startingRound");
+        }
+        long startingRound = Long.parseLong(dynamicConfigJSON.optString("startingRound", String.valueOf((int) (Math.random() * (999999 - 100000 + 1)) + 100000)));
+        dynamicConfig.get().setStartingRound(startingRound);
+        boolean onlyWholeNumbers = (dynamicConfigJSON.getBoolean("onlyWholeNumbers"));
+        dynamicConfig.get().setOnlyWholeNumbers(onlyWholeNumbers);
+        if (dynamicConfigJSON.optString("basicBetAmount").equals("")) {
+            dynamicConfigJSON.remove("basicBetAmount");
+        }
+        double basicBetAmount = Double.parseDouble(dynamicConfigJSON.optString("basicBetAmount", String.valueOf(onlyWholeNumbers ? 1 : 1.01)));
+        dynamicConfig.get().setBasicBetAmount(basicBetAmount);
+        dynamicConfigDAO.addDynamicConfig(dynamicConfig.get());
         return prepareResult.testFlow(operatorId, casesList);
     }
 
@@ -141,9 +195,9 @@ public class TestsController {
             Path path = Paths.get(file.getAbsolutePath());
             ByteArrayResource resource = new ByteArrayResource(Files.readAllBytes(path));
             HttpHeaders headers = new HttpHeaders();
-                headers.add(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + fileName);
-                return ResponseEntity.ok().headers(headers).contentLength(file.length())
-                        .contentType(MediaType.TEXT_PLAIN).body(resource);
+            headers.add(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + fileName);
+            return ResponseEntity.ok().headers(headers).contentLength(file.length())
+                    .contentType(MediaType.TEXT_PLAIN).body(resource);
         }
         return new ResponseEntity<String>("File not found", HttpStatus.NOT_FOUND);
     }

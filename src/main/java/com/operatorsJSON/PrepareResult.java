@@ -127,7 +127,7 @@ public class PrepareResult {
                 if (CACHE.containsKey(operatorId)) {
                     CACHE.replace(operatorId, caseBalances);
                 }
-//                checkBalances("Case_0", operatorId);
+//              checkBalances("Case_0", operatorId);
                 resultToSend.setExpectedResponse(String.valueOf(prepareExpectedResponse("Case_0", resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys)));
                 resultToSend.setCheckResults(checkResults("Case_0", resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
                 resultsToSend.put("Case_0", resultToSend);
@@ -366,15 +366,16 @@ public class PrepareResult {
                     resultToSend = new ResultToSend();
                     logging.logParser(testCase + " Insufficient funds", String.valueOf(operatorId));
                     double balance = 0;
-                    for (int i = cacheKeys.size(); i-- > 0; ) {
-//                        if (CACHE.get(operatorId).get(cacheKeys.get(i))[2] > 0) {
-//                            balance = CACHE.get(operatorId).get(cacheKeys.get(i))[2];
+                    for (int i = CACHE.get(operatorId).size() - 1; i >= 0; --i) {
                         if (CACHE.get(operatorId).get(i)[2] > 0) {
                             balance = CACHE.get(operatorId).get(i)[2];
+                            break;
                         }
                     }
                     debitRequest.setTransactionId(generateDebitTransactionId());
-                    debitRequest.setDebitAmount(BigDecimal.valueOf(Double.parseDouble(formatMyDouble(balance + (dynamicConfigDAO.findDynamicConfigById(operatorId).get().isOnlyWholeNumbers() ? 1 : 0.01)))));
+                    double temp = Double.parseDouble(formatMyDouble(balance + (dynamicConfigDAO.findDynamicConfigById(operatorId).get().isOnlyWholeNumbers() ? 1 : 0.01)));
+                    temp = dynamicConfigDAO.findDynamicConfigById(operatorId).get().isOnlyWholeNumbers()? Math.round(temp) : temp;
+                    debitRequest.setDebitAmount(BigDecimal.valueOf(temp));
                     updateRoundId();
                     debitRequest.setTimestamp(System.currentTimeMillis());
                     resultToSend.setRequest(owPretty.writeValueAsString(debitRequest));
@@ -780,6 +781,15 @@ public class PrepareResult {
         }
 
 //        CACHE.remove(operatorId);
+        Optional<OperatorsDynamicConfig> dynamicConfig = dynamicConfigDAO.findDynamicConfigById(operatorId);
+        for (int i = 0; i < 4; i++) {
+            double balance = CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[i];
+            if (balance > 0) {
+                dynamicConfig.get().setInitialBalance(balance);
+                dynamicConfigDAO.addDynamicConfig(dynamicConfig.get());
+                break;
+            }
+        }
         return new ResponseEntity<LinkedHashMap<String, ResultToSend>>(resultsToSend, HttpStatus.OK);
     }
 
@@ -796,7 +806,7 @@ public class PrepareResult {
             } catch (JSONException e) {
                 errorCode = -2;
             }
-            dynamicConfig.get().setBasicBetAmount(1.01);
+//            dynamicConfig.get().setBasicBetAmount(1.01);
             dynamicConfigDAO.addDynamicConfig(dynamicConfig.get());
         }
         return errorCode;
@@ -1992,7 +2002,7 @@ public class PrepareResult {
 
         cacheKeys.add(testCase);
         CACHE.get(operatorId).add(balances);
-//        checkBalances(testCase, operatorId);
+//       checkBalances(testCase, operatorId);
 
     }
 
@@ -2159,10 +2169,10 @@ public class PrepareResult {
         // Expected returned balance
         // Expected calculated balance
         // Calculated balance
-//        System.out.println(caseName);
-//        System.out.println("Returned balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[0]);
-//        System.out.println("Expected returned balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[1]);
-//        System.out.println("Expected calculated balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2]);
-//        System.out.println("Calculated balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[3]);
+        System.out.println(caseName);
+        System.out.println("Returned balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[0]);
+        System.out.println("Expected returned balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[1]);
+        System.out.println("Expected calculated balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2]);
+        System.out.println("Calculated balance: " + CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[3]);
     }
 }

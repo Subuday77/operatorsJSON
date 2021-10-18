@@ -113,7 +113,6 @@ public class OperatorsDynamicConfig {
     public double getBasicBetAmount() {
         return basicBetAmount;
     }
-
     public void setBasicBetAmount(double basicBetAmount) {
         this.basicBetAmount = basicBetAmount;
     }

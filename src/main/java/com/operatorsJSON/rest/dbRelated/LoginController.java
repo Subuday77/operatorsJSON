@@ -410,33 +410,6 @@ public class LoginController {
         return new ResponseEntity<String>(String.valueOf(res.get("remoteAddress")), HttpStatus.OK);
     }
 
-    //    @PostMapping("/cachecheck")
-//    public void check(@RequestBody String objectString) {
-//        System.out.println(objectString);
-//        JSONObject object = new JSONObject(objectString);
-//        ConcurrentMapCacheManager cacheManager = new ConcurrentMapCacheManager();
-//        getNumber(object);
-//        JSONObject jsonObject = new JSONObject(cacheManager.getCache("objects"));
-//        System.out.println(jsonObject);
-//       System.out.println(cacheManager.getCache("objects").get("number"));
-//    }
-//
-//    @CachePut(value = "objects", key = "number")
-//    public int getNumber(JSONObject object) {
-//        System.out.println(1);
-//        System.out.println(object.get("number"));
-//        return object.getInt("number");
-//    }
-//    @PostMapping("/test")
-//    public void test(@RequestBody String objectString) {
-//        JSONObject object = new JSONObject(objectString);
-//        return PrepareResult.defineObjectType(object.get("key"));
-//        JSONObject object = new JSONObject(objectString);
-//        System.out.println(object.get("key") instanceof Double);
-//        System.out.println(String.valueOf(object.get("key").getClass()));
-//    }
-
-
     private static String encode(String password) throws NoSuchAlgorithmException, InvalidKeyException {
 
         Mac sha256_HMAC = Mac.getInstance("HmacSHA256");
