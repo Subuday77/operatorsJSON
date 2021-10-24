@@ -12,6 +12,7 @@ import java.util.Map;
 public class Constants {
 //    public static Map<Long, LinkedHashMap<String, double[]>> CACHE = new LinkedHashMap<>();
     public static Map<Long, ArrayList<double[]>> CACHE = new LinkedHashMap<>();
+    public static Map<Long, long[]> TTLCACHE = new LinkedHashMap<>();
     public static final String HASHKEY = "cff44c52-d40e-46a4-acce-f6af7491529b";
     public static final String[] DEFAULTPASSWORDS = {"CgfyYLXu6sNF24nG", "vLBuNg5Sz7MAYCa9", "4pgbXMYLyRTE92NG", "sZqHkmLeNX64uhtV",
             "nLbvDKEyY5MuQCAq", "v2nW7EwDZ8hRPxLF", "74bMvw6NQfyV5jgY", "X4hMaJZUk3mnQy8H", "SZp5tC7fAgqUQYyj", "RDkKYfupZ97dVLhU",

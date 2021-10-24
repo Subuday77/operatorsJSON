@@ -65,14 +65,11 @@ public class RetrofitApi {
 
     private void buildRetrofit(String url) {
 
-       OkHttpClient.Builder httpClient = new OkHttpClient.Builder().addInterceptor(fileLoggerInterceptor).connectTimeout(30, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS);
+       OkHttpClient.Builder httpClient = new OkHttpClient.Builder().addInterceptor(fileLoggerInterceptor).connectTimeout(60, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS);
 //        OkHttpClient.Builder httpClient = new OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS);
-        Authenticator proxyAuthenticator = new Authenticator() {
-            @Override
-            public Request authenticate(Route route, Response response) throws IOException {
-                String credential = Credentials.basic(proxyUser, proxyPassword);
-                return response.request().newBuilder().header("Proxy-Authorization", credential).build();
-            }
+        Authenticator proxyAuthenticator = (route, response) -> {
+            String credential = Credentials.basic(proxyUser, proxyPassword);
+            return response.request().newBuilder().header("Proxy-Authorization", credential).build();
         };
         httpClient.proxy(new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort)))
                 .proxyAuthenticator(proxyAuthenticator);

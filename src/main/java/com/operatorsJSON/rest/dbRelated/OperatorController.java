@@ -17,6 +17,7 @@ import javax.servlet.http.HttpServletRequest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+
 import static com.operatorsJSON.beans.Constants.*;
 
 
@@ -117,7 +118,8 @@ public class OperatorController {
             return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
         }
     }
- @GetMapping("/clearlogs")
+
+    @GetMapping("/clearlogs")
     public ResponseEntity<?> clearLogs() {
         String userName = servletRequest.getHeader("userName");
         String password = servletRequest.getHeader("password");
@@ -134,7 +136,8 @@ public class OperatorController {
             return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
         }
     }
- @GetMapping("/clearcache")
+
+    @GetMapping("/clearcache")
     public ResponseEntity<?> clearCache() {
         String userName = servletRequest.getHeader("userName");
         String password = servletRequest.getHeader("password");
@@ -143,6 +146,7 @@ public class OperatorController {
             Optional<Operator> operatorToCheck = operatorDAO.findOperatorByOperatorId(operatorId);
             if (operatorToCheck.isPresent()) {
                 CACHE.remove(operatorId);
+                TTLCACHE.remove(operatorId);
                 return new ResponseEntity<>(HttpStatus.OK);
             } else {
                 return new ResponseEntity<String>("Operator ID " + operatorId + " not found", HttpStatus.NOT_FOUND);
@@ -160,6 +164,9 @@ public class OperatorController {
         if (actionAllowed(userName, password)) {
             Optional<Operator> operatorToCheck = operatorDAO.findOperatorByOperatorId(operatorId);
             if (operatorToCheck.isPresent()) {
+                CACHE.remove(operatorId);
+                TTLCACHE.remove(operatorId);
+                PrepareResult.clearLog(operatorId);
                 if (operatorToCheck.get().getAddedTo() < 0) {
                     operatorDAO.deleteOperator(operatorToCheck.get());
                     return new ResponseEntity<>(HttpStatus.OK);
@@ -186,7 +193,7 @@ public class OperatorController {
         }
     }
 
-    @GetMapping ("/checkcache")
+    @GetMapping("/checkcache")
     public ResponseEntity<?> checkIfCacheExists() {
         String userName = servletRequest.getHeader("userName");
         String password = servletRequest.getHeader("password");
@@ -196,12 +203,23 @@ public class OperatorController {
         }
         try {
             if (!CACHE.get(operatorId).isEmpty()) {
-                return new ResponseEntity<Boolean>(true,HttpStatus.OK);
+                return new ResponseEntity<Boolean>(true, HttpStatus.OK);
             }
         } catch (NullPointerException e) {
             return new ResponseEntity<Boolean>(false, HttpStatus.OK);
         }
         return new ResponseEntity<Boolean>(false, HttpStatus.OK);
+    }
+
+    @GetMapping("/getttls")
+    public ResponseEntity<?> getTTLdata() {
+        String userName = servletRequest.getHeader("userName");
+        String password = servletRequest.getHeader("password");
+        long operatorId = Long.parseLong(servletRequest.getHeader("operatorId"));
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        }
+        return new ResponseEntity<long[]>(TTLCACHE.get(operatorId), HttpStatus.OK);
     }
 
 //    @DeleteMapping("/deleteall")

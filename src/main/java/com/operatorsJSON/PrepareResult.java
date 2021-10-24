@@ -1,5 +1,6 @@
 package com.operatorsJSON;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
 import com.google.gson.Gson;
@@ -131,6 +132,7 @@ public class PrepareResult {
                 resultToSend.setExpectedResponse(String.valueOf(prepareExpectedResponse("Case_0", resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys)));
                 resultToSend.setCheckResults(checkResults("Case_0", resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
                 resultsToSend.put("Case_0", resultToSend);
+                TTLCACHE.put(operatorId, new long[]{System.currentTimeMillis(), System.currentTimeMillis()});
                 return new ResponseEntity<LinkedHashMap<String, ResultToSend>>(resultsToSend, HttpStatus.OK);
             default:
                 return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
@@ -139,6 +141,13 @@ public class PrepareResult {
     }
 
     public synchronized ResponseEntity<?> testFlow(long operatorId, ArrayList<String> casesList) throws IOException {
+        try {
+            if (TTLCACHE.get(operatorId).length == 0) {
+                TTLCACHE.put(operatorId, new long[]{System.currentTimeMillis(), System.currentTimeMillis()});
+            }
+        } catch (NullPointerException e) {
+            TTLCACHE.put(operatorId, new long[]{System.currentTimeMillis(), System.currentTimeMillis()});
+        }
         setOperatorInProcess(String.valueOf(operatorId));
 //        System.out.println(getOperatorInProcess());
         LinkedHashMap<String, ResultToSend> resultsToSend = new LinkedHashMap<>();
@@ -374,7 +383,7 @@ public class PrepareResult {
                     }
                     debitRequest.setTransactionId(generateDebitTransactionId());
                     double temp = Double.parseDouble(formatMyDouble(balance + (dynamicConfigDAO.findDynamicConfigById(operatorId).get().isOnlyWholeNumbers() ? 1 : 0.01)));
-                    temp = dynamicConfigDAO.findDynamicConfigById(operatorId).get().isOnlyWholeNumbers()? Math.round(temp) : temp;
+                    temp = dynamicConfigDAO.findDynamicConfigById(operatorId).get().isOnlyWholeNumbers() ? Math.round(temp) : temp;
                     debitRequest.setDebitAmount(BigDecimal.valueOf(temp));
                     updateRoundId();
                     debitRequest.setTimestamp(System.currentTimeMillis());
@@ -779,8 +788,6 @@ public class PrepareResult {
                     break;
             }
         }
-
-//        CACHE.remove(operatorId);
         Optional<OperatorsDynamicConfig> dynamicConfig = dynamicConfigDAO.findDynamicConfigById(operatorId);
         for (int i = 0; i < 4; i++) {
             double balance = CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[i];
@@ -790,6 +797,7 @@ public class PrepareResult {
                 break;
             }
         }
+        TTLCACHE.get(operatorId)[1] = System.currentTimeMillis();
         return new ResponseEntity<LinkedHashMap<String, ResultToSend>>(resultsToSend, HttpStatus.OK);
     }
 
@@ -2004,6 +2012,44 @@ public class PrepareResult {
         CACHE.get(operatorId).add(balances);
 //       checkBalances(testCase, operatorId);
 
+    }
+
+    public synchronized ResponseEntity<?> checkTokenTTL(long operatorId) throws JsonProcessingException {
+        ResultToSend resultToSend = new ResultToSend();
+        logging.logParser("Case_X Token TTL Check", String.valueOf(operatorId));
+        Optional<Operator> operatorToTest = operatorDAO.findOperatorByOperatorId(operatorId);
+        String baseUrl = operatorToTest.get().getOperatorUrl() + operatorToTest.get().getContextRootName();
+        requestCommon.setValues(operatorId);
+        debitRequest.setValues();
+        debitRequest.setDebitAmount(BigDecimal.valueOf(1));
+        debitRequest.setTransactionId(generateDebitTransactionId());
+        debitRequest.setTimestamp(System.currentTimeMillis());
+        resultToSend.setResponse(beautifyJsonString(serviceClient.getResponse(baseUrl, operatorToTest.get().getDebitMethodName(), ow.writeValueAsString(debitRequest),
+                generateHash(ow.writeValueAsString(debitRequest), operatorToTest.get().getHashKey()))));
+        int errorCode = -1;
+        try {
+            JSONObject responseJSON = new JSONObject(resultToSend.getResponse());
+            errorCode = responseJSON.optInt("errorCode", -1);
+            if (errorCode != 0) {
+                CACHE.remove(operatorId);
+                TTLCACHE.remove(operatorId);
+                return new ResponseEntity<Integer>(errorCode, HttpStatus.OK);
+            }
+            double returnedBalance = Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", 0)));
+            double[] balances = new double[4];
+            for (int i = 0; i < 4; i++) {
+                balances[i] = returnedBalance;
+            }
+            ArrayList<double[]> caseBalances = new ArrayList<>();
+            caseBalances.add(balances);
+            CACHE.put(operatorId, caseBalances);
+            TTLCACHE.get(operatorId)[1] = System.currentTimeMillis();
+            return new ResponseEntity<Integer>(errorCode, HttpStatus.OK);
+        } catch (Exception e) {
+            CACHE.remove(operatorId);
+            TTLCACHE.remove(operatorId);
+            return new ResponseEntity<Integer>(errorCode, HttpStatus.OK);
+        }
     }
 
     private static String defineExpectedCurrency(Optional<OperatorsDynamicConfig> dynamicConfig) {

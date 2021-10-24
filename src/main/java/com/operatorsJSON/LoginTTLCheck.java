@@ -39,6 +39,7 @@ public class LoginTTLCheck {
                         operatorToCheck.get().getUsedTokens().clear();
                         operatorDAO.addOperator(operatorToCheck.get());
                         CACHE.remove(operatorToCheck.get().getOperatorId());
+                        TTLCACHE.remove(operatorToCheck.get().getOperatorId());
                         PrepareResult.clearLog(operatorToCheck.get().getOperatorId());
                     }
                 }

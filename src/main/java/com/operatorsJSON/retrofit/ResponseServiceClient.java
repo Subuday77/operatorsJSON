@@ -9,16 +9,10 @@ import retrofit2.Response;
 
 @Component
 public class ResponseServiceClient {
-//    @Autowired
-//    Starter starter;
-
     @Autowired
     RetrofitApi retrofitApi;
 
-
     public String getResponse(String baseUrl, String method, String request, String hash) {
-//        String baseUrl = starter.getOperatorUrl() + starter.getContextRootName();
-//        String baseUrl = "http://127.0.0.1";
         RetrofitApi.baseUrl = baseUrl;
         RetrofitApi.getInstance();
         ResponseService service = retrofitApi.getResponseService();

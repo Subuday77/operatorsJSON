@@ -26,6 +26,7 @@ import java.nio.file.Paths;
 import java.util.*;
 
 import static com.operatorsJSON.beans.Constants.CACHE;
+import static com.operatorsJSON.beans.Constants.TTLCACHE;
 
 @RestController
 @CrossOrigin(origins = "*")
@@ -179,6 +180,16 @@ public class TestsController {
         dynamicConfig.get().setBasicBetAmount(basicBetAmount);
         dynamicConfigDAO.addDynamicConfig(dynamicConfig.get());
         return prepareResult.testFlow(operatorId, casesList);
+    }
+
+    @GetMapping("/testtokenttl")
+    public ResponseEntity<?> checkTokenTTL() throws IOException {
+        String userName = servletRequest.getHeader("userName");
+        String password = servletRequest.getHeader("password");
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        }
+        return prepareResult.checkTokenTTL(Long.parseLong(servletRequest.getHeader("operatorId")));
     }
 
     @GetMapping("/getfile")
