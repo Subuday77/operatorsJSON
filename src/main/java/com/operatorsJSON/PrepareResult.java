@@ -2132,6 +2132,9 @@ public class PrepareResult {
     }
 
     private static String beautifyJsonString(String jsonString) {
+        while (jsonString.contains(", ")) {
+            jsonString = jsonString.replace(", ", ",");
+        }
         return jsonString.replace("\n", "").replace("{", "{\r\n")
                 .replace(",\"", ",\r\n\"").replace("}", "\r\n}");
     }
