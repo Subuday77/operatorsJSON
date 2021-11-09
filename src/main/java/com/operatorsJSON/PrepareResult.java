@@ -54,6 +54,8 @@ public class PrepareResult {
     @Autowired
     RollbackRequest rollbackRequest;
     @Autowired
+    GetNewTokenRequest getNewTokenRequest;
+    @Autowired
     ResultToSend resultToSend;
     @Autowired
     ResponseServiceClient serviceClient;
@@ -74,23 +76,10 @@ public class PrepareResult {
         this.operatorInProcess = operatorInProcess;
     }
 
-
-//    public static HashMap<Long, LinkedHashMap<String, double[]>> getCache() {
-//        return cache;
-//    }
-//
-//    public static void setCache(HashMap<Long, LinkedHashMap<String, double[]>> cache) {
-//        PrepareResult.cache = cache;
-//    }
-
-    // Returned balance
-    // Expected returned balance
-    // Expected calculated balance
-    // Calculated balance
-
     public synchronized ResponseEntity<?> authAttempt(long operatorId) throws IOException {
         LinkedHashMap<String, ResultToSend> resultsToSend = new LinkedHashMap<>();
         CACHE.remove(operatorId);
+        TTLCACHE.remove(operatorId);
         clearLog(operatorId);
         setOperatorInProcess(String.valueOf(operatorId));
         Optional<Operator> operatorToTest = operatorDAO.findOperatorByOperatorId(operatorId);
@@ -119,9 +108,7 @@ public class PrepareResult {
                 for (int i = 0; i < 4; i++) {
                     balances[i] = getBalance(resultToSend.getResponse());
                 }
-//                LinkedHashMap<String, double[]> caseBalances = new LinkedHashMap<>();
                 ArrayList<double[]> caseBalances = new ArrayList<>();
-//                caseBalances.put("Case_0", balances);
                 caseBalances.add(balances);
                 cacheKeys.add("Case_0");
                 CACHE.put(operatorId, caseBalances);
@@ -133,6 +120,9 @@ public class PrepareResult {
                 resultToSend.setCheckResults(checkResults("Case_0", resultToSend.getRequest(), resultToSend.getResponse(), cacheKeys));
                 resultsToSend.put("Case_0", resultToSend);
                 TTLCACHE.put(operatorId, new long[]{System.currentTimeMillis(), System.currentTimeMillis()});
+                if (TTLCACHE.containsKey(operatorId)) {
+                    TTLCACHE.replace(operatorId, new long[]{System.currentTimeMillis(), System.currentTimeMillis()});
+                }
                 return new ResponseEntity<LinkedHashMap<String, ResultToSend>>(resultsToSend, HttpStatus.OK);
             default:
                 return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
@@ -802,22 +792,68 @@ public class PrepareResult {
     }
 
     private int setupDynamicConfig(String response, long id) {
-        JSONObject responseJSON = new JSONObject(response);
-        Optional<OperatorsDynamicConfig> dynamicConfig = dynamicConfigDAO.findDynamicConfigById(id);
-        int errorCode = responseJSON.optInt("errorCode", -1);
-        if (errorCode == 0) {
-            try {
-                dynamicConfig.get().setSessionToken(responseJSON.getString("token"));
-                dynamicConfig.get().setUid(responseJSON.getString("uid"));
-                dynamicConfig.get().setCurrency(responseJSON.getString("currency"));
-                dynamicConfig.get().setInitialBalance(responseJSON.getDouble("balance"));
-            } catch (JSONException e) {
-                errorCode = -2;
-            }
+        int errorCode;
+        try {
+            JSONObject responseJSON = new JSONObject(response);
+            Optional<OperatorsDynamicConfig> dynamicConfig = dynamicConfigDAO.findDynamicConfigById(id);
+            errorCode = responseJSON.optInt("errorCode", -1);
+            if (errorCode == 0) {
+                try {
+                    dynamicConfig.get().setSessionToken(responseJSON.getString("token"));
+                    dynamicConfig.get().setUid(responseJSON.getString("uid"));
+                    dynamicConfig.get().setCurrency(responseJSON.getString("currency"));
+                    dynamicConfig.get().setInitialBalance(responseJSON.getDouble("balance"));
+                } catch (JSONException e) {
+                    errorCode = -2;
+                }
 //            dynamicConfig.get().setBasicBetAmount(1.01);
-            dynamicConfigDAO.addDynamicConfig(dynamicConfig.get());
+                dynamicConfigDAO.addDynamicConfig(dynamicConfig.get());
+            }
+        } catch (JSONException e) {
+            errorCode = -1;
         }
         return errorCode;
+    }
+
+    public synchronized int getNewToken(long operatorId, String getNewTokenMethodName) {
+        Optional<Operator> operatorToTest = operatorDAO.findOperatorByOperatorId(operatorId);
+        Optional<OperatorsDynamicConfig> dynamicConfig = dynamicConfigDAO.findDynamicConfigById(operatorId);
+        String baseUrl = operatorToTest.get().getOperatorUrl() + operatorToTest.get().getContextRootName();
+        requestCommon.setValues(operatorId);
+        getNewTokenRequest.setValues();
+//        getNewTokenRequest.setOperatorId(operatorId);
+//        getNewTokenRequest.setCurrentToken(requestCommon.getToken());
+        getNewTokenRequest.setTimestamp(System.currentTimeMillis());
+        JSONObject getNewTokenResponseJSON;
+        logging.logParser("Case_0.1 Get New Token", String.valueOf(operatorId));
+        int errorCode = -1;
+        try {
+            getNewTokenResponseJSON = new JSONObject(serviceClient.getResponse(baseUrl, getNewTokenMethodName, ow.writeValueAsString(getNewTokenRequest),
+                    generateHash(ow.writeValueAsString(getNewTokenRequest), operatorToTest.get().getHashKey())));
+
+        } catch (JSONException | JsonProcessingException e) {
+            return -2;
+        }
+        try {
+            errorCode = getNewTokenResponseJSON.getInt("errorCode");
+        } catch (JSONException e) {
+            return errorCode;
+        }
+        if (errorCode != 0) {
+            return errorCode;
+        }
+        try {
+            double balance = getNewTokenResponseJSON.getDouble("balance");
+            String token = getNewTokenResponseJSON.getString("token");
+            if (balance != CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[0]) {
+                return -4;
+            }
+            dynamicConfig.get().setSessionToken(token);
+            dynamicConfigDAO.addDynamicConfig(dynamicConfig.get());
+            return errorCode;
+        } catch (JSONException e) {
+            return -3;
+        }
     }
 
     private HashMap<String, ParameterProperties> checkResults(String caseNumber, String request, String response, ArrayList<String> cacheKeys) {
@@ -972,8 +1008,9 @@ public class PrepareResult {
                                 if (String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())).length() == 0) {
                                     errorCodes.add(207); // Value is missing non mandatory
                                 }
-                                if (tokenUsed(requestJSON, String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())))) {
-                                    errorCodes.add(205); // Token was already used once
+                                if (!dynamicConfigDAO.findDynamicConfigById(responseJSON.getLong("operatorId")).get()
+                                        .getInitialToken().equals(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) {
+                                    errorCodes.add(2040); //Wrong value non mandatory
                                 }
                                 if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("String")) {
                                     errorCodes.add(2030); // Invalid data format non mandatory
@@ -981,9 +1018,8 @@ public class PrepareResult {
                                 if (responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals(responseMapWithLowerCaseKeys.get("token"))) {
                                     errorCodes.add(2051); // Wrong value non mandatory Initial token same as session
                                 }
-                                if (!dynamicConfigDAO.findDynamicConfigById(responseJSON.getLong("operatorId")).get()
-                                        .getInitialToken().equals(responseMapWithLowerCaseKeys.get(key.toLowerCase()))) {
-                                    errorCodes.add(2040); //Wrong value non mandatory
+                                if (tokenUsed(requestJSON, String.valueOf(responseMapWithLowerCaseKeys.get(key.toLowerCase())))) {
+                                    errorCodes.add(205); // Token was already used once
                                 }
                                 break;
                             case "clientip":
@@ -1685,7 +1721,11 @@ public class PrepareResult {
                 case 205:
                     parameterProperties.setMandatory(errorCode == 105);
                     parameterProperties.setExists(true);
-                    parameterProperties.setErrorState(errorCode == 105 ? ERRORSTATE.E : ERRORSTATE.W);
+                    try {
+                        parameterProperties.setErrorState(parameterProperties.getErrorState().equals(ERRORSTATE.E) ? ERRORSTATE.E : ERRORSTATE.W);
+                    } catch (NullPointerException e) {
+                        parameterProperties.setErrorState(errorCode == 105 ? ERRORSTATE.E : ERRORSTATE.W);
+                    }
 //                    parameterProperties.setDataFormat(defineObjectType(responseJSON.get(key)));
                     foundErrors.add("Key <b>" + key + "</b> has value, which already was used once.");
                     parameterProperties.setFoundErrors(foundErrors);
@@ -1882,10 +1922,16 @@ public class PrepareResult {
             case "Case_23":
                 expectedResponseMap.put("errorCode", 1);
                 expectedResponseMap.put("errorDescription", "Invalid hash");
-                if (CACHE.get(requestJSON.optLong("operatorId")).get(cacheKeys.size() - 1)[0] == CACHE.get(requestJSON.optLong("operatorId")).get(cacheKeys.size() - 1)[2]) {
-                    expectedResponseMap.remove("balance");
-                    expectedResponseMap.put("balance", BigDecimal.valueOf(CACHE.get(requestJSON.optLong("operatorId"))
-                            .get(cacheKeys.size() - 1)[2]).setScale(2, RoundingMode.HALF_DOWN));
+                if (CACHE.get(requestJSON.optLong("operatorId")).get(cacheKeys.size() - 1)[0] != 0) {
+                    if (CACHE.get(requestJSON.optLong("operatorId")).get(cacheKeys.size() - 1)[0] == CACHE.get(requestJSON.optLong("operatorId")).get(cacheKeys.size() - 1)[2]) {
+                        expectedResponseMap.remove("balance");
+                        expectedResponseMap.put("balance", BigDecimal.valueOf(CACHE.get(requestJSON.optLong("operatorId"))
+                                .get(cacheKeys.size() - 1)[2]).setScale(2, RoundingMode.HALF_DOWN));
+                    } else {
+                        expectedResponseMap.remove("balance");
+                        expectedResponseMap.put("balance", BigDecimal.valueOf(Double.parseDouble(formatMyDouble(responseJSON.optDouble("balance", CACHE.get(requestJSON.optLong("operatorId"))
+                                .get(cacheKeys.size() - 1)[2]) + dynamicConfig.get().getBasicBetAmount()))).setScale(2, RoundingMode.HALF_DOWN));
+                    }
                 }
                 expectedResponseString = gson.toJson(expectedResponseMap);
                 return beautifyJsonString(expectedResponseString);
@@ -2001,6 +2047,13 @@ public class PrepareResult {
             balances[2] = CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2];
             if (testCase.equals("Case_15")) {
                 balances[2] = 0;
+            }
+            if (testCase.equals("Case_23")) {
+                if (balances[0] == 0) {
+                    balances[2] = CACHE.get(operatorId).get(CACHE.get(operatorId).size() - 1)[2];
+                } else {
+                    balances[2] = dynamicConfigDAO.findDynamicConfigById(operatorId).get().getInitialBalance();
+                }
             }
         }
         balances[1] = balances[1] < 0 ? 0 : balances[1];

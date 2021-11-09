@@ -1,6 +1,5 @@
 package com.operatorsJSON.rest.testsRelated;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.operatorsJSON.DAO.dbRelated.LoginDAO;
 import com.operatorsJSON.DAO.dbRelated.OperatorDAO;
 import com.operatorsJSON.DAO.dbRelated.OperatorsDynamicConfigDAO;
@@ -26,7 +25,6 @@ import java.nio.file.Paths;
 import java.util.*;
 
 import static com.operatorsJSON.beans.Constants.CACHE;
-import static com.operatorsJSON.beans.Constants.TTLCACHE;
 
 @RestController
 @CrossOrigin(origins = "*")
@@ -50,7 +48,9 @@ public class TestsController {
         String password = servletRequest.getHeader("password");
         String initialToken = servletRequest.getHeader("initialToken");
         long operatorId = Long.parseLong(servletRequest.getHeader("operatorId"));
-        boolean isAdvanced = Boolean.parseBoolean(servletRequest.getHeader("isAdvanced"));
+//        boolean isAdvanced = Boolean.parseBoolean(servletRequest.getHeader("isAdvanced"));
+        boolean isGetNewToken = Boolean.parseBoolean(servletRequest.getHeader("isGetNewToken"));
+        String getNewTokenMethodName = servletRequest.getHeader("getNewTokenMethodName");
         JSONObject dynamicConfigJSON = new JSONObject(servletRequest.getHeader("dynamicConfig"));
         if (!actionAllowed(userName, password)) {
             return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
@@ -74,6 +74,14 @@ public class TestsController {
         double basicBetAmount = Double.parseDouble(dynamicConfigJSON.optString("basicBetAmount", String.valueOf(onlyWholeNumbers ? 1 : 1.01)));
         dynamicConfig.get().setBasicBetAmount(basicBetAmount);
         dynamicConfigDAO.addDynamicConfig(dynamicConfig.get());
+        if (isGetNewToken) {
+            ResponseEntity <?> responseEntity = prepareResult.authAttempt(operatorId);
+            int getNewTokenErrorCode = prepareResult.getNewToken(operatorId, getNewTokenMethodName);
+            if (getNewTokenErrorCode == 0) {
+                return responseEntity;
+            }
+            return new ResponseEntity<Integer>(getNewTokenErrorCode, HttpStatus.I_AM_A_TEAPOT); //418
+        }
         return prepareResult.authAttempt(operatorId);
     }
 
@@ -94,48 +102,16 @@ public class TestsController {
     }
 
 
+
+
     @PostMapping("/starttest")
     public ResponseEntity<?> startTestFlow(@RequestBody ArrayList<String> casesList) throws IOException {
-//    public ResponseEntity<?> startTestFlow() throws IOException {
-//        ArrayList<String> casesList = new ArrayList<>();
-//        casesList.add("Case_1");
-//        casesList.add("Case_2");
-//        casesList.add("Case_3");
-//        casesList.add("Case_4");
-//        casesList.add("Case_5");
-//        casesList.add("Case_6");
-//        casesList.add("Case_7");
-//        casesList.add("Case_8.1");
-//        casesList.add("Case_8.2");
-//        casesList.add("Case_9");
-//        casesList.add("Case_10.1");
-//        casesList.add("Case_10.2");
-//        casesList.add("Case_11");
-//        casesList.add("Case_12");
-//        casesList.add("Case_13");
-//        casesList.add("Case_14");
-//        casesList.add("Case_15");
-//        casesList.add("Case_16");
-//        casesList.add("Case_17.1");
-//        casesList.add("Case_17.2");
-//        casesList.add("Case_18.1");
-//        casesList.add("Case_18.2");
-//        casesList.add("Case_19.1");
-//        casesList.add("Case_19.2");
-//        casesList.add("Case_20.1");
-//        casesList.add("Case_20.2");
-//        casesList.add("Case_21.1");
-//        casesList.add("Case_21.2");
-//        casesList.add("Case_22.1");
-//        casesList.add("Case_22.2");
-//        casesList.add("Case_22.3");
-//        casesList.add("Case_23");
-//        casesList.add("Case_24");
-//        casesList.add("Case_25");
         String userName = servletRequest.getHeader("userName");
         String password = servletRequest.getHeader("password");
         long operatorId = Long.parseLong(servletRequest.getHeader("operatorId"));
         boolean isAdvanced = Boolean.parseBoolean(servletRequest.getHeader("isAdvanced"));
+        boolean isGetNewToken = Boolean.parseBoolean(servletRequest.getHeader("isGetNewToken"));
+        String getNewTokenMethodName = servletRequest.getHeader("getNewTokenMethodName");
         JSONObject dynamicConfigJSON = new JSONObject(servletRequest.getHeader("dynamicConfig"));
         if (!actionAllowed(userName, password)) {
             return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
@@ -179,6 +155,14 @@ public class TestsController {
         double basicBetAmount = Double.parseDouble(dynamicConfigJSON.optString("basicBetAmount", String.valueOf(onlyWholeNumbers ? 1 : 1.01)));
         dynamicConfig.get().setBasicBetAmount(basicBetAmount);
         dynamicConfigDAO.addDynamicConfig(dynamicConfig.get());
+        if (isGetNewToken) {
+//            ResponseEntity <?> responseEntity = prepareResult.authAttempt(operatorId);
+            int getNewTokenErrorCode = prepareResult.getNewToken(operatorId, getNewTokenMethodName);
+            if (getNewTokenErrorCode == 0) {
+                return prepareResult.testFlow(operatorId, casesList);
+            }
+            return new ResponseEntity<Integer>(getNewTokenErrorCode, HttpStatus.I_AM_A_TEAPOT); //418
+        }
         return prepareResult.testFlow(operatorId, casesList);
     }
 
