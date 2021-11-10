@@ -76,15 +76,4 @@ public class GetNewTokenRequest implements SetValues {
         this.timestamp = timestamp;
     }
 
-    @Override
-    public String toString() {
-        return "GetNewTokenRequest{" +
-                "operatorId=" + operatorId +
-                ", uid='" + uid + '\'' +
-                ", gameId=" + gameId +
-                ", currentToken='" + currentToken + '\'' +
-                ", tableId=" + tableId +
-                ", timestamp=" + timestamp +
-                '}';
-    }
 }

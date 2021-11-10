@@ -76,6 +76,9 @@ public class TestsController {
         dynamicConfigDAO.addDynamicConfig(dynamicConfig.get());
         if (isGetNewToken) {
             ResponseEntity <?> responseEntity = prepareResult.authAttempt(operatorId);
+            if (!responseEntity.getStatusCode().equals(HttpStatus.OK)) {
+                return responseEntity;
+            }
             int getNewTokenErrorCode = prepareResult.getNewToken(operatorId, getNewTokenMethodName);
             if (getNewTokenErrorCode == 0) {
                 return responseEntity;

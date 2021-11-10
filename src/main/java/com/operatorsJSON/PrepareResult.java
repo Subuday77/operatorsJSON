@@ -1243,7 +1243,7 @@ public class PrepareResult {
                         if (!defineObjectType(responseMapWithLowerCaseKeys.get(key.toLowerCase())).equals("Integer")) {
                             errorCodes.add(1030); // Invalid data format
                         }
-                        if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).equals(requestJSON.get("roundId"))) {
+                        if (!responseMapWithLowerCaseKeys.get(key.toLowerCase()).toString().equals(requestJSON.get("roundId").toString())) {
                             errorCodes.add(1040); // Wrong value
                         }
                         break;
