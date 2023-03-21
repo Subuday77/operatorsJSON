@@ -43,7 +43,7 @@ public class RetrofitApi {
 
     private ResponseService responseService;
     //	 String proxyUrl = System.getenv("IPBURGER_BLUE_HTTP");
-    String proxyUrl = "http://CeraKh:Aw10l3S8@66-63-167-138.ip.heroku.ipb.cloud:9080";
+    String proxyUrl = "https://CeraKh:Aw10l3S8@66-63-167-138.ip.heroku.ipb.cloud:9080";
 
     String[] proxyValues = proxyUrl.split("[/(:\\/@)/]+");
     String proxyUser = proxyValues[1];
