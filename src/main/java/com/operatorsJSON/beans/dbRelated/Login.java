@@ -1,6 +1,5 @@
 package com.operatorsJSON.beans.dbRelated;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
@@ -63,7 +62,6 @@ public class Login {
     }
 
     @Column
-    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     public String getPassword() {
         return password;
     }
