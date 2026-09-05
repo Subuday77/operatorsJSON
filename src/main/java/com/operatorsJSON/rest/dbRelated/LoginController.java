@@ -25,67 +25,51 @@ import java.util.*;
 @CrossOrigin(origins = "*")
 @RequestMapping("/logincontroller")
 public class LoginController {
-    private static final int RECOVERY_ACCESS_LEVEL = 3;
+    private static final int OPERATOR_ACCESS_LEVEL = 0;
+    private static final int KAM_ACCESS_LEVEL = 1;
     private static final int ADMIN_ACCESS_LEVEL = 2;
+    private static final int RECOVERY_ACCESS_LEVEL = 3;
 
-    @Autowired
-    LoginDAO loginDAO;
-    @Autowired
-    OperatorDAO operatorDAO;
-    @Autowired
-    HttpServletRequest servletRequest;
-    @Autowired
-    ResponseServiceClient responseServiceClient;
+    @Autowired LoginDAO loginDAO;
+    @Autowired OperatorDAO operatorDAO;
+    @Autowired HttpServletRequest servletRequest;
+    @Autowired ResponseServiceClient responseServiceClient;
 
     @PostConstruct
     public void createDefaultLogin() throws NoSuchAlgorithmException, InvalidKeyException {
         String bootstrapPassword = System.getenv("BOOTSTRAP_ADMIN_PASSWORD");
-        if (bootstrapPassword == null || bootstrapPassword.isBlank()) {
-            return;
-        }
-
+        if (bootstrapPassword == null || bootstrapPassword.isBlank()) return;
         String bootstrapUser = Optional.ofNullable(System.getenv("BOOTSTRAP_ADMIN_USERNAME"))
-                .filter(value -> !value.isBlank())
-                .orElse("SuperAdmin");
-
-        Optional<Login> defaultLogin = loginDAO.findLoginByUserName(bootstrapUser);
-        if (defaultLogin.isEmpty()) {
-            Login defaultLoginToCreate = new Login();
-            defaultLoginToCreate.setUserName(bootstrapUser);
-            defaultLoginToCreate.setPassword(encode(bootstrapPassword));
-            defaultLoginToCreate.setAccessLevel(RECOVERY_ACCESS_LEVEL);
-            loginDAO.addLogin(defaultLoginToCreate);
+                .filter(value -> !value.isBlank()).orElse("SuperAdmin");
+        if (loginDAO.findLoginByUserName(bootstrapUser).isEmpty()) {
+            Login recovery = new Login();
+            recovery.setUserName(bootstrapUser);
+            recovery.setPassword(encode(bootstrapPassword));
+            recovery.setAccessLevel(RECOVERY_ACCESS_LEVEL);
+            loginDAO.addLogin(recovery);
         }
     }
 
     @GetMapping("/login")
     public ResponseEntity<?> login() throws NoSuchAlgorithmException, InvalidKeyException {
-        String userNameToCheck = servletRequest.getHeader("userName");
-        String passwordToCheck = servletRequest.getHeader("password");
-        Optional<Login> login = loginDAO.findLoginByUserName(userNameToCheck);
-        if (login.isPresent() && login.get().isActive() && login.get().getPassword().equals(encode(passwordToCheck))) {
-            return new ResponseEntity<>(login, HttpStatus.OK);
+        String userName = servletRequest.getHeader("userName");
+        String rawPassword = servletRequest.getHeader("password");
+        Optional<Login> login = loginDAO.findLoginByUserName(userName);
+        if (login.isPresent() && login.get().isActive() && login.get().getPassword().equals(encode(rawPassword))) {
+            return new ResponseEntity<>(login.get(), HttpStatus.OK);
         }
         return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
     }
 
     @PostMapping("/create")
     public ResponseEntity<?> createLogin(@RequestBody Login login) throws NoSuchAlgorithmException, InvalidKeyException {
-        String userName = servletRequest.getHeader("userName");
-        String password = servletRequest.getHeader("password");
-        Optional<Login> requester = authenticatedLogin(userName, password);
-        if (requester.isEmpty()) {
+        Optional<Login> requester = currentLogin();
+        if (requester.isEmpty() || !canCreateLevel(requester.get(), login.getAccessLevel())) {
             return new ResponseEntity<>("Forbidden!", HttpStatus.FORBIDDEN);
         }
-
-        if (requester.get().getAccessLevel() == RECOVERY_ACCESS_LEVEL && login.getAccessLevel() != ADMIN_ACCESS_LEVEL) {
-            return new ResponseEntity<>("Recovery account may only create administrator accounts", HttpStatus.FORBIDDEN);
-        }
-
         if (loginDAO.findLoginByUserName(login.getUserName()).isPresent()) {
             return new ResponseEntity<>("User " + login.getUserName() + " already exists", HttpStatus.IM_USED);
         }
-
         login.setPassword(encode(login.getPassword()));
         loginDAO.addLogin(login);
         return new ResponseEntity<>(HttpStatus.OK);
@@ -93,23 +77,20 @@ public class LoginController {
 
     @PostMapping("/createaskam")
     public ResponseEntity<?> createLoginAsKAM(@RequestBody Operator operator) throws NoSuchAlgorithmException, InvalidKeyException {
-        String userName = servletRequest.getHeader("userName");
-        String password = servletRequest.getHeader("password");
-        JSONObject loginData = new JSONObject(servletRequest.getHeader("login"));
-        if (!actionAllowed(userName, password)) {
+        Optional<Login> requester = currentLogin();
+        if (requester.isEmpty() || requester.get().getAccessLevel() != KAM_ACCESS_LEVEL) {
             return new ResponseEntity<>("Forbidden!", HttpStatus.FORBIDDEN);
         }
-
+        JSONObject loginData = new JSONObject(servletRequest.getHeader("login"));
         String newUserName = String.valueOf(loginData.get("userName"));
         if (loginDAO.findLoginByUserName(newUserName).isPresent() || operatorDAO.findOperatorByOperatorId(operator.getOperatorId()).isPresent()) {
             return new ResponseEntity<>("Already exists", HttpStatus.IM_USED);
         }
-
         Login loginToCreate = new Login();
         loginToCreate.setUserName(newUserName);
         loginToCreate.setPassword(encode(String.valueOf(loginData.get("password"))));
+        loginToCreate.setAccessLevel(OPERATOR_ACCESS_LEVEL);
         loginDAO.addLogin(loginToCreate);
-
         Login newLogin = loginDAO.findLoginByUserName(newUserName).orElseThrow();
         operator.setAddedTo(newLogin.getId());
         operatorDAO.addOperator(operator);
@@ -120,51 +101,33 @@ public class LoginController {
 
     @PostMapping("/renew")
     public ResponseEntity<?> updateTimestamp(@RequestBody Login login) {
-        String userName = servletRequest.getHeader("userName");
-        String password = servletRequest.getHeader("password");
-        if (!actionAllowed(userName, password)) {
+        Optional<Login> requester = currentLogin();
+        Optional<Login> target = loginDAO.findLoginByUserName(login.getUserName());
+        if (requester.isEmpty() || target.isEmpty() || !canManage(requester.get(), target.get())) {
             return new ResponseEntity<>("Forbidden!", HttpStatus.FORBIDDEN);
         }
-        Optional<Login> loginToCheck = loginDAO.findLoginByUserName(login.getUserName());
-        if (loginToCheck.isEmpty()) {
-            return new ResponseEntity<>("Not found", HttpStatus.NOT_FOUND);
-        }
-        loginToCheck.get().setTimestamp(System.currentTimeMillis());
-        loginDAO.addLogin(loginToCheck.get());
+        target.get().setTimestamp(System.currentTimeMillis());
+        loginDAO.addLogin(target.get());
         return new ResponseEntity<>("Timestamp updated", HttpStatus.OK);
     }
 
     @PostMapping("/addremoveoperators")
     public ResponseEntity<?> addRemoveOperators(@RequestBody ArrayList<Operator> operators) {
-        String userName = servletRequest.getHeader("userName");
-        String password = servletRequest.getHeader("password");
+        Optional<Login> requester = currentLogin();
         long loginId = Long.parseLong(servletRequest.getHeader("id"));
-        if (!actionAllowed(userName, password)) {
+        Optional<Login> target = loginDAO.findLoginById(loginId);
+        if (requester.isEmpty() || target.isEmpty() || !canManage(requester.get(), target.get()) || target.get().getAccessLevel() != OPERATOR_ACCESS_LEVEL) {
             return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
         }
-
-        Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
-        if (loginToCheck.isEmpty()) {
-            return new ResponseEntity<>("Login not found.", HttpStatus.NOT_FOUND);
-        }
-
-        Login targetLogin = loginToCheck.get();
+        target.get().getOperators().clear();
         for (Operator operator : operators) {
-            if (operator.getAddedTo() == loginId) {
-                operator.setAddedTo(loginId);
-            } else if (operator.getAddedTo() == targetLogin.getId()) {
-                operator.setAddedTo(-1L);
-            }
+            operator.setAddedTo(operator.getAddedTo() == loginId ? loginId : -1L);
             operatorDAO.addOperator(operator);
         }
-
-        targetLogin.getOperators().clear();
         for (Operator operator : operatorDAO.getAllOperators()) {
-            if (operator.getAddedTo() == loginId) {
-                targetLogin.getOperators().add(operator);
-            }
+            if (operator.getAddedTo() == loginId) target.get().getOperators().add(operator);
         }
-        loginDAO.addLogin(targetLogin);
+        loginDAO.addLogin(target.get());
         return new ResponseEntity<>(HttpStatus.OK);
     }
 
@@ -173,210 +136,161 @@ public class LoginController {
         String userName = servletRequest.getHeader("userName");
         String oldPassword = servletRequest.getHeader("oldPassword");
         String newPassword = servletRequest.getHeader("newPassword");
-        if (!actionAllowed(userName, encode(oldPassword))) {
+        Optional<Login> login = loginDAO.findLoginByUserName(userName);
+        if (login.isEmpty() || !login.get().isActive() || !login.get().getPassword().equals(encode(oldPassword))) {
             return new ResponseEntity<>("Forbidden!", HttpStatus.FORBIDDEN);
         }
+        String newCredential = encode(newPassword);
+        login.get().setPassword(newCredential);
+        loginDAO.addLogin(login.get());
+        return new ResponseEntity<>(newCredential, HttpStatus.OK);
+    }
 
-        Optional<Login> loginToCheck = loginDAO.findLoginByUserName(userName);
-        if (loginToCheck.isEmpty()) {
-            return new ResponseEntity<>("Login " + userName + " not found.", HttpStatus.NOT_FOUND);
+    @GetMapping("/setdefpass")
+    public ResponseEntity<?> setDefaultPassword() throws NoSuchAlgorithmException, InvalidKeyException {
+        Optional<Login> requester = currentLogin();
+        String targetUserName = servletRequest.getHeader("targetUserName");
+        Optional<Login> target = loginDAO.findLoginByUserName(targetUserName);
+        if (requester.isEmpty() || target.isEmpty() || !canManage(requester.get(), target.get())) {
+            return new ResponseEntity<>("Forbidden!", HttpStatus.FORBIDDEN);
         }
-
-        loginToCheck.get().setPassword(encode(newPassword));
-        loginDAO.addLogin(loginToCheck.get());
+        String defaultPassword = System.getenv("RESET_PASSWORD_LEVEL_" + target.get().getAccessLevel());
+        if (defaultPassword == null || defaultPassword.isBlank()) {
+            return new ResponseEntity<>("Reset password is not configured", HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        target.get().setPassword(encode(defaultPassword));
+        loginDAO.addLogin(target.get());
         return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @GetMapping("/getallogins")
     public ResponseEntity<?> getAllLogins() {
-        String userName = servletRequest.getHeader("userName");
-        String password = servletRequest.getHeader("password");
-        int accessLevel = Integer.parseInt(servletRequest.getHeader("accessLevel"));
-        if (!actionAllowed(userName, password)) {
+        Optional<Login> requester = currentLogin();
+        if (requester.isEmpty() || requester.get().getAccessLevel() < KAM_ACCESS_LEVEL) {
             return new ResponseEntity<>("Forbidden!", HttpStatus.FORBIDDEN);
         }
-
-        List<Login> loginsToSend = new ArrayList<>();
+        List<Login> result = new ArrayList<>();
         for (Login login : loginDAO.getAllLogins()) {
-            if (accessLevel == ADMIN_ACCESS_LEVEL && login.getAccessLevel() < ADMIN_ACCESS_LEVEL) {
-                loginsToSend.add(login);
-            } else if (accessLevel == 1 && login.getAccessLevel() == 0) {
-                loginsToSend.add(login);
-            }
+            if (canManage(requester.get(), login)) result.add(login);
         }
-        loginsToSend.sort(Comparator.comparing(Login::getUserName));
-        return new ResponseEntity<>(loginsToSend, HttpStatus.OK);
+        result.sort(Comparator.comparing(Login::getUserName));
+        return new ResponseEntity<>(result, HttpStatus.OK);
     }
 
     @GetMapping("/changestate")
     public ResponseEntity<?> changeLoginState() {
-        String userName = servletRequest.getHeader("userName");
-        String password = servletRequest.getHeader("password");
-        long loginId = Long.parseLong(servletRequest.getHeader("id"));
-        String state = servletRequest.getHeader("state");
-        if (!actionAllowed(userName, password)) {
-            return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
-        }
-
-        Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
-        if (loginToCheck.isEmpty()) {
-            return new ResponseEntity<>("Not found", HttpStatus.NOT_FOUND);
-        }
-
-        Login login = loginToCheck.get();
-        boolean active = "Active".equals(state);
-        login.setActive(active);
-        login.setTimestamp(active ? System.currentTimeMillis() + 2629800000L : -1L);
-        if (!active && login.getAccessLevel() == 0) {
-            clearTokenHistory(login);
-        }
-        loginDAO.addLogin(login);
+        Optional<Login> requester = currentLogin();
+        long id = Long.parseLong(servletRequest.getHeader("id"));
+        Optional<Login> target = loginDAO.findLoginById(id);
+        if (requester.isEmpty() || target.isEmpty() || !canManage(requester.get(), target.get())) return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
+        boolean active = "Active".equals(servletRequest.getHeader("state"));
+        target.get().setActive(active);
+        target.get().setTimestamp(active ? System.currentTimeMillis() + 2629800000L : -1L);
+        if (!active && target.get().getAccessLevel() == OPERATOR_ACCESS_LEVEL) clearTokenHistory(target.get());
+        loginDAO.addLogin(target.get());
         return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @GetMapping("/renamelogin")
     public ResponseEntity<?> renameLogin() {
-        String userName = servletRequest.getHeader("userName");
-        String password = servletRequest.getHeader("password");
-        long loginId = Long.parseLong(servletRequest.getHeader("id"));
+        Optional<Login> requester = currentLogin();
+        long id = Long.parseLong(servletRequest.getHeader("id"));
         String newName = servletRequest.getHeader("newName");
-        if (!actionAllowed(userName, password)) {
-            return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
-        }
-        if (loginDAO.findLoginByUserName(newName).isPresent()) {
-            return new ResponseEntity<>("Name already exists", HttpStatus.IM_USED);
-        }
-
-        Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
-        if (loginToCheck.isEmpty()) {
-            return new ResponseEntity<>("Not found", HttpStatus.NOT_FOUND);
-        }
-        loginToCheck.get().setUserName(newName);
-        loginDAO.addLogin(loginToCheck.get());
+        Optional<Login> target = loginDAO.findLoginById(id);
+        if (requester.isEmpty() || target.isEmpty() || !canManage(requester.get(), target.get())) return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
+        if (loginDAO.findLoginByUserName(newName).isPresent()) return new ResponseEntity<>("Name already exists", HttpStatus.IM_USED);
+        target.get().setUserName(newName);
+        loginDAO.addLogin(target.get());
         return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @GetMapping("/checkal")
     public ResponseEntity<?> getAccessLevel() {
-        String userName = servletRequest.getHeader("userName");
-        return loginDAO.findLoginByUserName(userName)
-                .<ResponseEntity<?>>map(login -> new ResponseEntity<>(login.getAccessLevel(), HttpStatus.OK))
-                .orElseGet(() -> new ResponseEntity<>("Not found", HttpStatus.NOT_FOUND));
+        Optional<Login> requester = currentLogin();
+        Optional<Login> target = loginDAO.findLoginByUserName(servletRequest.getHeader("targetUserName"));
+        if (requester.isEmpty() || target.isEmpty() || !canManage(requester.get(), target.get())) return new ResponseEntity<>("Forbidden!", HttpStatus.FORBIDDEN);
+        return new ResponseEntity<>(target.get().getAccessLevel(), HttpStatus.OK);
     }
 
     @GetMapping("/changettl")
     public ResponseEntity<?> changeTTL() {
-        String userName = servletRequest.getHeader("userName");
-        String password = servletRequest.getHeader("password");
-        long loginId = Long.parseLong(servletRequest.getHeader("id"));
-        long newValue = Long.parseLong(servletRequest.getHeader("newValue"));
-        if (!actionAllowed(userName, password)) {
-            return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
-        }
-
-        Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
-        if (loginToCheck.isEmpty()) {
-            return new ResponseEntity<>("Login not found.", HttpStatus.NOT_FOUND);
-        }
-
-        Login login = loginToCheck.get();
-        login.setTimestamp(System.currentTimeMillis() + (newValue * 86400000L));
-        if (newValue <= 0) {
-            login.setTimestamp(-1L);
-            login.setActive(false);
-        }
-        loginDAO.addLogin(login);
+        Optional<Login> requester = currentLogin();
+        long id = Long.parseLong(servletRequest.getHeader("id"));
+        long days = Long.parseLong(servletRequest.getHeader("newValue"));
+        Optional<Login> target = loginDAO.findLoginById(id);
+        if (requester.isEmpty() || target.isEmpty() || !canManage(requester.get(), target.get()) || target.get().getAccessLevel() != OPERATOR_ACCESS_LEVEL) return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
+        target.get().setTimestamp(days <= 0 ? -1L : System.currentTimeMillis() + days * 86400000L);
+        if (days <= 0) target.get().setActive(false);
+        loginDAO.addLogin(target.get());
         return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @GetMapping("/getaddedoperators")
     public ResponseEntity<?> getAddedOperators() {
-        String userName = servletRequest.getHeader("userName");
-        String password = servletRequest.getHeader("password");
-        long loginId = Long.parseLong(servletRequest.getHeader("id"));
-        if (!actionAllowed(userName, password)) {
-            return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
-        }
-        if (loginDAO.findLoginById(loginId).isEmpty()) {
-            return new ResponseEntity<>("Login not found.", HttpStatus.NOT_FOUND);
-        }
-
-        List<Operator> relevantOperators = new ArrayList<>();
-        for (Operator operator : operatorDAO.getAllOperators()) {
-            if (operator.getAddedTo() == -1 || operator.getAddedTo() == loginId) {
-                relevantOperators.add(operator);
-            }
-        }
-        return new ResponseEntity<>(relevantOperators, HttpStatus.OK);
+        Optional<Login> requester = currentLogin();
+        long id = Long.parseLong(servletRequest.getHeader("id"));
+        Optional<Login> target = loginDAO.findLoginById(id);
+        if (requester.isEmpty() || target.isEmpty() || !canManage(requester.get(), target.get()) || target.get().getAccessLevel() != OPERATOR_ACCESS_LEVEL) return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
+        List<Operator> relevant = new ArrayList<>();
+        for (Operator operator : operatorDAO.getAllOperators()) if (operator.getAddedTo() == -1 || operator.getAddedTo() == id) relevant.add(operator);
+        return new ResponseEntity<>(relevant, HttpStatus.OK);
     }
 
     @DeleteMapping("/delete")
     public ResponseEntity<?> deleteLogin() {
-        String userName = servletRequest.getHeader("userName");
-        String password = servletRequest.getHeader("password");
-        long loginId = Long.parseLong(servletRequest.getHeader("id"));
-        if (!actionAllowed(userName, password)) {
-            return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
-        }
-
-        Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
-        if (loginToCheck.isEmpty()) {
-            return new ResponseEntity<>("Login not found.", HttpStatus.NOT_FOUND);
-        }
-
+        Optional<Login> requester = currentLogin();
+        long id = Long.parseLong(servletRequest.getHeader("id"));
+        Optional<Login> target = loginDAO.findLoginById(id);
+        if (requester.isEmpty() || target.isEmpty() || !canManage(requester.get(), target.get())) return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
         for (Operator operator : operatorDAO.getAllOperators()) {
-            if (operator.getAddedTo() == loginId) {
-                operator.setAddedTo(-1L);
-                operatorDAO.addOperator(operator);
-            }
+            if (operator.getAddedTo() == id) { operator.setAddedTo(-1L); operatorDAO.addOperator(operator); }
         }
-        loginDAO.deleteLogin(loginToCheck.get());
+        loginDAO.deleteLogin(target.get());
         return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @GetMapping("/ipcheck")
     public ResponseEntity<?> ipCheck() {
         String checkerUrl = System.getenv("IP_CHECK_URL");
-        if (checkerUrl == null || checkerUrl.isBlank()) {
-            return new ResponseEntity<>("IP_CHECK_URL is not configured", HttpStatus.SERVICE_UNAVAILABLE);
-        }
+        if (checkerUrl == null || checkerUrl.isBlank()) return new ResponseEntity<>("IP_CHECK_URL is not configured", HttpStatus.SERVICE_UNAVAILABLE);
         Object response = responseServiceClient.getResponse(checkerUrl);
-        if (response == null) {
-            return new ResponseEntity<>("IP checker is unavailable", HttpStatus.BAD_GATEWAY);
-        }
-        JSONObject res = new JSONObject(response);
-        return new ResponseEntity<>(String.valueOf(res.get("remoteAddress")), HttpStatus.OK);
+        if (response == null) return new ResponseEntity<>("IP checker is unavailable", HttpStatus.BAD_GATEWAY);
+        return new ResponseEntity<>(String.valueOf(new JSONObject(response).get("remoteAddress")), HttpStatus.OK);
     }
 
-    private static String encode(String password) throws NoSuchAlgorithmException, InvalidKeyException {
-        String hmacKey = System.getenv("PASSWORD_HMAC_KEY");
-        if (hmacKey == null || hmacKey.isBlank()) {
-            throw new IllegalStateException("PASSWORD_HMAC_KEY must be configured");
-        }
-        Mac sha256Hmac = Mac.getInstance("HmacSHA256");
-        SecretKeySpec secretKey = new SecretKeySpec(hmacKey.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
-        sha256Hmac.init(secretKey);
-        return Base64.encodeBase64String(sha256Hmac.doFinal(password.getBytes(StandardCharsets.UTF_8)));
+    private Optional<Login> currentLogin() {
+        String userName = servletRequest.getHeader("userName");
+        String credential = servletRequest.getHeader("password");
+        if (userName == null || credential == null) return Optional.empty();
+        return loginDAO.findLoginByUserName(userName).filter(Login::isActive).filter(login -> login.getPassword().equals(credential));
     }
 
-    private Optional<Login> authenticatedLogin(String userName, String password) {
-        return loginDAO.findLoginByUserName(userName)
-                .filter(Login::isActive)
-                .filter(login -> login.getPassword().equals(password));
+    private boolean canCreateLevel(Login requester, int targetLevel) {
+        if (requester.getAccessLevel() == RECOVERY_ACCESS_LEVEL) return targetLevel == ADMIN_ACCESS_LEVEL;
+        if (requester.getAccessLevel() == ADMIN_ACCESS_LEVEL) return targetLevel >= OPERATOR_ACCESS_LEVEL && targetLevel < ADMIN_ACCESS_LEVEL;
+        return false;
     }
 
-    private boolean actionAllowed(String userName, String password) {
-        return authenticatedLogin(userName, password)
-                .filter(login -> login.getAccessLevel() != RECOVERY_ACCESS_LEVEL)
-                .isPresent();
+    private boolean canManage(Login requester, Login target) {
+        if (requester.getId() == target.getId()) return false;
+        if (requester.getAccessLevel() == RECOVERY_ACCESS_LEVEL) return target.getAccessLevel() == ADMIN_ACCESS_LEVEL;
+        if (requester.getAccessLevel() == ADMIN_ACCESS_LEVEL) return target.getAccessLevel() < ADMIN_ACCESS_LEVEL;
+        if (requester.getAccessLevel() == KAM_ACCESS_LEVEL) return target.getAccessLevel() == OPERATOR_ACCESS_LEVEL;
+        return false;
     }
 
     private void clearTokenHistory(Login login) {
-        for (Operator operator : login.getOperators()) {
-            operatorDAO.findOperatorByOperatorId(operator.getOperatorId()).ifPresent(operatorToCheck -> {
-                operatorToCheck.getUsedTokens().clear();
-                operatorDAO.addOperator(operatorToCheck);
-            });
-        }
+        for (Operator operator : login.getOperators()) operatorDAO.findOperatorByOperatorId(operator.getOperatorId()).ifPresent(found -> {
+            found.getUsedTokens().clear();
+            operatorDAO.addOperator(found);
+        });
+    }
+
+    private static String encode(String password) throws NoSuchAlgorithmException, InvalidKeyException {
+        String key = System.getenv("PASSWORD_HMAC_KEY");
+        if (key == null || key.isBlank()) throw new IllegalStateException("PASSWORD_HMAC_KEY must be configured");
+        Mac hmac = Mac.getInstance("HmacSHA256");
+        hmac.init(new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        return Base64.encodeBase64String(hmac.doFinal(password.getBytes(StandardCharsets.UTF_8)));
     }
 }
