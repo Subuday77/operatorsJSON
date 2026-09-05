@@ -6,9 +6,6 @@ import org.springframework.stereotype.Component;
 import javax.persistence.*;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Random;
-
-import static com.operatorsJSON.beans.Constants.DEFAULTPASSWORDS;
 
 @Entity
 @Table(name = "Logins")
@@ -19,7 +16,7 @@ public class Login {
     private String userName;
     private String password;
     private int accessLevel = 0;
-    private long timestamp = System.currentTimeMillis() + 2629800000l;
+    private long timestamp = System.currentTimeMillis() + 2629800000L;
     private boolean active = true;
     private List<Operator> operators = new ArrayList<>();
 
@@ -109,22 +106,16 @@ public class Login {
         this.operators = operators;
     }
 
-
     @Override
     public String toString() {
         return "Login{" +
                 "id=" + id +
                 ", userName='" + userName + '\'' +
-                ", password='" + password + '\'' +
+                ", password='[REDACTED]'" +
                 ", accessLevel=" + accessLevel +
                 ", timestamp=" + timestamp +
                 ", active=" + active +
                 ", operators=" + operators +
                 '}';
-    }
-
-    private static String getRandomPassword() {
-        Random random = new Random();
-        return DEFAULTPASSWORDS[random.ints(1, 0, 251).findFirst().getAsInt()];
     }
 }
