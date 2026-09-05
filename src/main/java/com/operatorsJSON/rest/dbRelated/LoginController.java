@@ -25,6 +25,9 @@ import java.util.*;
 @CrossOrigin(origins = "*")
 @RequestMapping("/logincontroller")
 public class LoginController {
+    private static final int RECOVERY_ACCESS_LEVEL = 3;
+    private static final int ADMIN_ACCESS_LEVEL = 2;
+
     @Autowired
     LoginDAO loginDAO;
     @Autowired
@@ -50,7 +53,7 @@ public class LoginController {
             Login defaultLoginToCreate = new Login();
             defaultLoginToCreate.setUserName(bootstrapUser);
             defaultLoginToCreate.setPassword(encode(bootstrapPassword));
-            defaultLoginToCreate.setAccessLevel(3);
+            defaultLoginToCreate.setAccessLevel(RECOVERY_ACCESS_LEVEL);
             loginDAO.addLogin(defaultLoginToCreate);
         }
     }
@@ -70,8 +73,13 @@ public class LoginController {
     public ResponseEntity<?> createLogin(@RequestBody Login login) throws NoSuchAlgorithmException, InvalidKeyException {
         String userName = servletRequest.getHeader("userName");
         String password = servletRequest.getHeader("password");
-        if (!actionAllowed(userName, password)) {
+        Optional<Login> requester = authenticatedLogin(userName, password);
+        if (requester.isEmpty()) {
             return new ResponseEntity<>("Forbidden!", HttpStatus.FORBIDDEN);
+        }
+
+        if (requester.get().getAccessLevel() == RECOVERY_ACCESS_LEVEL && login.getAccessLevel() != ADMIN_ACCESS_LEVEL) {
+            return new ResponseEntity<>("Recovery account may only create administrator accounts", HttpStatus.FORBIDDEN);
         }
 
         if (loginDAO.findLoginByUserName(login.getUserName()).isPresent()) {
@@ -112,6 +120,11 @@ public class LoginController {
 
     @PostMapping("/renew")
     public ResponseEntity<?> updateTimestamp(@RequestBody Login login) {
+        String userName = servletRequest.getHeader("userName");
+        String password = servletRequest.getHeader("password");
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<>("Forbidden!", HttpStatus.FORBIDDEN);
+        }
         Optional<Login> loginToCheck = loginDAO.findLoginByUserName(login.getUserName());
         if (loginToCheck.isEmpty()) {
             return new ResponseEntity<>("Not found", HttpStatus.NOT_FOUND);
@@ -185,9 +198,7 @@ public class LoginController {
 
         List<Login> loginsToSend = new ArrayList<>();
         for (Login login : loginDAO.getAllLogins()) {
-            if (accessLevel == 3 && login.getAccessLevel() == 2) {
-                loginsToSend.add(login);
-            } else if (accessLevel == 2 && login.getAccessLevel() < 2) {
+            if (accessLevel == ADMIN_ACCESS_LEVEL && login.getAccessLevel() < ADMIN_ACCESS_LEVEL) {
                 loginsToSend.add(login);
             } else if (accessLevel == 1 && login.getAccessLevel() == 0) {
                 loginsToSend.add(login);
@@ -348,12 +359,16 @@ public class LoginController {
         return Base64.encodeBase64String(sha256Hmac.doFinal(password.getBytes(StandardCharsets.UTF_8)));
     }
 
-    private boolean actionAllowed(String userName, String password) {
-        Optional<Login> loginToCheck = loginDAO.findLoginByUserName(userName);
-        return loginToCheck
+    private Optional<Login> authenticatedLogin(String userName, String password) {
+        return loginDAO.findLoginByUserName(userName)
                 .filter(Login::isActive)
-                .map(login -> login.getPassword().equals(password))
-                .orElse(false);
+                .filter(login -> login.getPassword().equals(password));
+    }
+
+    private boolean actionAllowed(String userName, String password) {
+        return authenticatedLogin(userName, password)
+                .filter(login -> login.getAccessLevel() != RECOVERY_ACCESS_LEVEL)
+                .isPresent();
     }
 
     private void clearTokenHistory(Login login) {
