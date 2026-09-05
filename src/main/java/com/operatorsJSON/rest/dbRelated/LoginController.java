@@ -2,17 +2,12 @@ package com.operatorsJSON.rest.dbRelated;
 
 import com.operatorsJSON.DAO.dbRelated.LoginDAO;
 import com.operatorsJSON.DAO.dbRelated.OperatorDAO;
-import com.operatorsJSON.PrepareResult;
 import com.operatorsJSON.beans.dbRelated.Login;
 import com.operatorsJSON.beans.dbRelated.Operator;
 import com.operatorsJSON.retrofit.ResponseServiceClient;
 import org.apache.tomcat.util.codec.binary.Base64;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.cache.Cache;
-import org.springframework.cache.annotation.CachePut;
-import org.springframework.cache.annotation.Cacheable;
-import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,19 +16,15 @@ import javax.annotation.PostConstruct;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import javax.servlet.http.HttpServletRequest;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 
-import static com.operatorsJSON.beans.Constants.HASHKEY;
-
 @RestController
 @CrossOrigin(origins = "*")
-
 @RequestMapping("/logincontroller")
 public class LoginController {
-    @Autowired
-    Login login;
     @Autowired
     LoginDAO loginDAO;
     @Autowired
@@ -43,14 +34,22 @@ public class LoginController {
     @Autowired
     ResponseServiceClient responseServiceClient;
 
-
     @PostConstruct
     public void createDefaultLogin() throws NoSuchAlgorithmException, InvalidKeyException {
-        Optional<Login> defaultLogin = loginDAO.findLoginByUserName("SuperAdmin");
+        String bootstrapPassword = System.getenv("BOOTSTRAP_ADMIN_PASSWORD");
+        if (bootstrapPassword == null || bootstrapPassword.isBlank()) {
+            return;
+        }
+
+        String bootstrapUser = Optional.ofNullable(System.getenv("BOOTSTRAP_ADMIN_USERNAME"))
+                .filter(value -> !value.isBlank())
+                .orElse("SuperAdmin");
+
+        Optional<Login> defaultLogin = loginDAO.findLoginByUserName(bootstrapUser);
         if (defaultLogin.isEmpty()) {
             Login defaultLoginToCreate = new Login();
-            defaultLoginToCreate.setUserName("SuperAdmin");
-            defaultLoginToCreate.setPassword(encode("P@ssw0rd02091945"));
+            defaultLoginToCreate.setUserName(bootstrapUser);
+            defaultLoginToCreate.setPassword(encode(bootstrapPassword));
             defaultLoginToCreate.setAccessLevel(3);
             loginDAO.addLogin(defaultLoginToCreate);
         }
@@ -58,77 +57,68 @@ public class LoginController {
 
     @GetMapping("/login")
     public ResponseEntity<?> login() throws NoSuchAlgorithmException, InvalidKeyException {
-
         String userNameToCheck = servletRequest.getHeader("userName");
         String passwordToCheck = servletRequest.getHeader("password");
         Optional<Login> login = loginDAO.findLoginByUserName(userNameToCheck);
-        if (login.isPresent()) {
-            if (login.get().getPassword().equals(encode(passwordToCheck))) {
-
-                return new ResponseEntity<Optional<Login>>(login, HttpStatus.OK);
-            }
-//        } else {
-//            return new ResponseEntity<String>("Login " + userNameToCheck + " not found.", HttpStatus.NOT_FOUND);
+        if (login.isPresent() && login.get().isActive() && login.get().getPassword().equals(encode(passwordToCheck))) {
+            return new ResponseEntity<>(login, HttpStatus.OK);
         }
-        return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
     }
 
     @PostMapping("/create")
     public ResponseEntity<?> createLogin(@RequestBody Login login) throws NoSuchAlgorithmException, InvalidKeyException {
         String userName = servletRequest.getHeader("userName");
         String password = servletRequest.getHeader("password");
-        if (actionAllowed(userName, password)) {
-            Optional<Login> loginToCheck = loginDAO.findLoginByUserName(login.getUserName());
-            if (!loginToCheck.isPresent()) {
-                login.setPassword(encode(login.getPassword()));
-                loginDAO.addLogin(login);
-                return new ResponseEntity<>(HttpStatus.OK);
-            } else {
-                return new ResponseEntity<String>("User " + login.getUserName() + " already exists", HttpStatus.IM_USED);
-            }
-        } else {
-            return new ResponseEntity<String>("Forbidden!", HttpStatus.FORBIDDEN);
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<>("Forbidden!", HttpStatus.FORBIDDEN);
         }
+
+        if (loginDAO.findLoginByUserName(login.getUserName()).isPresent()) {
+            return new ResponseEntity<>("User " + login.getUserName() + " already exists", HttpStatus.IM_USED);
+        }
+
+        login.setPassword(encode(login.getPassword()));
+        loginDAO.addLogin(login);
+        return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @PostMapping("/createaskam")
     public ResponseEntity<?> createLoginAsKAM(@RequestBody Operator operator) throws NoSuchAlgorithmException, InvalidKeyException {
         String userName = servletRequest.getHeader("userName");
         String password = servletRequest.getHeader("password");
-        JSONObject login = new JSONObject(servletRequest.getHeader("login"));
-        if (actionAllowed(userName, password)) {
-            Optional<Login> loginToCheck = loginDAO.findLoginByUserName(String.valueOf(login.get("userName")));
-            Optional<Operator> operatorToCheck = operatorDAO.findOperatorByOperatorId(operator.getOperatorId());
-            if (loginToCheck.isPresent() || operatorToCheck.isPresent()) {
-                return new ResponseEntity<String>("Already exists", HttpStatus.IM_USED);
-            } else {
-                Login loginToCreate = new Login();
-                loginToCreate.setUserName(String.valueOf(login.get("userName")));
-                loginToCreate.setPassword(encode(String.valueOf(login.get("password"))));
-                loginDAO.addLogin(loginToCreate);
-                Optional<Login> newLogin = loginDAO.findLoginByUserName(String.valueOf(login.get("userName")));
-                operator.setAddedTo(newLogin.get().getId());
-                operatorDAO.addOperator(operator);
-                List<Operator> tmp = newLogin.get().getOperators();
-                tmp.add(operator);
-                loginDAO.addLogin(newLogin.get());
-                return new ResponseEntity<>(HttpStatus.OK);
-            }
-        } else {
-            return new ResponseEntity<String>("Forbidden!", HttpStatus.FORBIDDEN);
+        JSONObject loginData = new JSONObject(servletRequest.getHeader("login"));
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<>("Forbidden!", HttpStatus.FORBIDDEN);
         }
+
+        String newUserName = String.valueOf(loginData.get("userName"));
+        if (loginDAO.findLoginByUserName(newUserName).isPresent() || operatorDAO.findOperatorByOperatorId(operator.getOperatorId()).isPresent()) {
+            return new ResponseEntity<>("Already exists", HttpStatus.IM_USED);
+        }
+
+        Login loginToCreate = new Login();
+        loginToCreate.setUserName(newUserName);
+        loginToCreate.setPassword(encode(String.valueOf(loginData.get("password"))));
+        loginDAO.addLogin(loginToCreate);
+
+        Login newLogin = loginDAO.findLoginByUserName(newUserName).orElseThrow();
+        operator.setAddedTo(newLogin.getId());
+        operatorDAO.addOperator(operator);
+        newLogin.getOperators().add(operator);
+        loginDAO.addLogin(newLogin);
+        return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @PostMapping("/renew")
     public ResponseEntity<?> updateTimestamp(@RequestBody Login login) {
         Optional<Login> loginToCheck = loginDAO.findLoginByUserName(login.getUserName());
-        if (loginToCheck.isPresent()) {
-            loginToCheck.get().setTimestamp(System.currentTimeMillis());
-            loginDAO.addLogin(loginToCheck.get());
-            return new ResponseEntity<String>("Timestamp updated", HttpStatus.OK);
-        } else {
-            return new ResponseEntity<String>("Not found", HttpStatus.NOT_FOUND);
+        if (loginToCheck.isEmpty()) {
+            return new ResponseEntity<>("Not found", HttpStatus.NOT_FOUND);
         }
+        loginToCheck.get().setTimestamp(System.currentTimeMillis());
+        loginDAO.addLogin(loginToCheck.get());
+        return new ResponseEntity<>("Timestamp updated", HttpStatus.OK);
     }
 
     @PostMapping("/addremoveoperators")
@@ -136,41 +126,33 @@ public class LoginController {
         String userName = servletRequest.getHeader("userName");
         String password = servletRequest.getHeader("password");
         long loginId = Long.parseLong(servletRequest.getHeader("id"));
-        if (actionAllowed(userName, password)) {
-            Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
-            List<Operator> tmp = loginToCheck.get().getOperators();
-            Map<Long, Long> operatorsOld = new HashMap<>();
-            for (Operator operator : operatorDAO.getAllOperators()) {
-                operatorsOld.put(operator.getOperatorId(), operator.getAddedTo());
-            }
-            if (loginToCheck.isPresent()) {
-                for (Operator operator : operators) {
-                    if (operator.getAddedTo() == loginId) {
-                        if (operatorsOld.get(operator.getOperatorId()) != loginId) {
-                            operator.setAddedTo(loginToCheck.get().getId());
-                            operatorDAO.addOperator(operator);
-                            tmp.add(operator);
-                            loginDAO.addLogin(loginToCheck.get());
-                        }
-                    } else {
-                        operator.setAddedTo(-1l);
-                        operatorDAO.addOperator(operator);
-                        loginToCheck.get().getOperators().clear();
-                        for (Operator oper : operatorDAO.getAllOperators()) {
-                            if (oper.getAddedTo() == loginId) {
-                                tmp.add(oper);
-                            }
-                        }
-                        loginDAO.addLogin(loginToCheck.get());
-                    }
-                }
-                return new ResponseEntity<>(HttpStatus.OK);
-            } else {
-                return new ResponseEntity<String>("Login not found.", HttpStatus.NOT_FOUND);
-            }
-        } else {
-            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
         }
+
+        Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
+        if (loginToCheck.isEmpty()) {
+            return new ResponseEntity<>("Login not found.", HttpStatus.NOT_FOUND);
+        }
+
+        Login targetLogin = loginToCheck.get();
+        for (Operator operator : operators) {
+            if (operator.getAddedTo() == loginId) {
+                operator.setAddedTo(loginId);
+            } else if (operator.getAddedTo() == targetLogin.getId()) {
+                operator.setAddedTo(-1L);
+            }
+            operatorDAO.addOperator(operator);
+        }
+
+        targetLogin.getOperators().clear();
+        for (Operator operator : operatorDAO.getAllOperators()) {
+            if (operator.getAddedTo() == loginId) {
+                targetLogin.getOperators().add(operator);
+            }
+        }
+        loginDAO.addLogin(targetLogin);
+        return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @GetMapping("/update")
@@ -178,57 +160,18 @@ public class LoginController {
         String userName = servletRequest.getHeader("userName");
         String oldPassword = servletRequest.getHeader("oldPassword");
         String newPassword = servletRequest.getHeader("newPassword");
-        if (actionAllowed(userName, encode(oldPassword))) {
-            Optional<Login> loginToCheck = loginDAO.findLoginByUserName(userName);
-            if (!loginToCheck.isPresent()) {
-                return new ResponseEntity<String>("Login " + userName + " not found.", HttpStatus.NOT_FOUND);
-            } else {
-                loginToCheck.get().setPassword(encode(newPassword));
-                loginDAO.addLogin(loginToCheck.get());
-                return new ResponseEntity<String>(loginToCheck.get().getPassword(), HttpStatus.OK);
-            }
-        } else {
-            return new ResponseEntity<String>("Forbidden!", HttpStatus.FORBIDDEN);
+        if (!actionAllowed(userName, encode(oldPassword))) {
+            return new ResponseEntity<>("Forbidden!", HttpStatus.FORBIDDEN);
         }
-    }
 
-    @GetMapping("/setdefpass")
-    public ResponseEntity<?> setDefaultPassword() throws NoSuchAlgorithmException, InvalidKeyException {
-        String userName = servletRequest.getHeader("userName");
-        int accessLevel = Integer.parseInt(servletRequest.getHeader("accessLevel"));
         Optional<Login> loginToCheck = loginDAO.findLoginByUserName(userName);
-        if (!loginToCheck.isPresent()) {
-            return new ResponseEntity<String>("Not found", HttpStatus.NOT_FOUND);
-        } else {
-            switch (accessLevel) {
-                case 0:
-                    loginToCheck.get().setPassword(encode("A123123"));
-                    loginDAO.addLogin(loginToCheck.get());
-                    return new ResponseEntity<>(HttpStatus.OK);
-                case 1:
-                    loginToCheck.get().setPassword(encode("A456456"));
-                    loginDAO.addLogin(loginToCheck.get());
-                    return new ResponseEntity<>(HttpStatus.OK);
-                case 2:
-                    loginToCheck.get().setPassword(encode("A12345678"));
-                    loginDAO.addLogin(loginToCheck.get());
-                    return new ResponseEntity<>(HttpStatus.OK);
-                case 3:
-                    loginToCheck.get().setPassword(encode("P@ssw0rd02091945"));
-                    loginDAO.addLogin(loginToCheck.get());
-                    return new ResponseEntity<>(HttpStatus.OK);
-            }
-//            if (accessLevel == 2) {
-//                loginToCheck.get().setPassword(encode("A12345678"));
-//                loginDAO.addLogin(loginToCheck.get());
-//                return new ResponseEntity<>(HttpStatus.OK);
-//            } else if (accessLevel == 3) {
-//                loginToCheck.get().setPassword(encode("P@ssword02091945"));
-//                loginDAO.addLogin(loginToCheck.get());
-//                return new ResponseEntity<>(HttpStatus.OK);
-//            }
+        if (loginToCheck.isEmpty()) {
+            return new ResponseEntity<>("Login " + userName + " not found.", HttpStatus.NOT_FOUND);
         }
-        return new ResponseEntity<String>("Bad request", HttpStatus.BAD_REQUEST);
+
+        loginToCheck.get().setPassword(encode(newPassword));
+        loginDAO.addLogin(loginToCheck.get());
+        return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @GetMapping("/getallogins")
@@ -236,23 +179,22 @@ public class LoginController {
         String userName = servletRequest.getHeader("userName");
         String password = servletRequest.getHeader("password");
         int accessLevel = Integer.parseInt(servletRequest.getHeader("accessLevel"));
-        List<Login> loginsToSend = new ArrayList<>();
-        if (actionAllowed(userName, password)) {
-            ArrayList<Login> allLogins = (ArrayList<Login>) loginDAO.getAllLogins();
-            for (Login login : allLogins) {
-                if (accessLevel == 3 && login.getAccessLevel() == 2) {
-                    loginsToSend.add(login);
-                } else if (accessLevel == 2 && login.getAccessLevel() < 2) {
-                    loginsToSend.add(login);
-                } else if (accessLevel == 1 && login.getAccessLevel() == 0) {
-                    loginsToSend.add(login);
-                }
-            }
-            loginsToSend.sort(Comparator.comparing(Login::getUserName));
-            return new ResponseEntity<ArrayList<Login>>((ArrayList<Login>) loginsToSend, HttpStatus.OK);
-        } else {
-            return new ResponseEntity<String>("Forbidden!", HttpStatus.FORBIDDEN);
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<>("Forbidden!", HttpStatus.FORBIDDEN);
         }
+
+        List<Login> loginsToSend = new ArrayList<>();
+        for (Login login : loginDAO.getAllLogins()) {
+            if (accessLevel == 3 && login.getAccessLevel() == 2) {
+                loginsToSend.add(login);
+            } else if (accessLevel == 2 && login.getAccessLevel() < 2) {
+                loginsToSend.add(login);
+            } else if (accessLevel == 1 && login.getAccessLevel() == 0) {
+                loginsToSend.add(login);
+            }
+        }
+        loginsToSend.sort(Comparator.comparing(Login::getUserName));
+        return new ResponseEntity<>(loginsToSend, HttpStatus.OK);
     }
 
     @GetMapping("/changestate")
@@ -261,33 +203,24 @@ public class LoginController {
         String password = servletRequest.getHeader("password");
         long loginId = Long.parseLong(servletRequest.getHeader("id"));
         String state = servletRequest.getHeader("state");
-        if (actionAllowed(userName, password)) {
-            Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
-            if (loginToCheck.isPresent()) {
-                if (state.equals("Active")) {
-                    loginToCheck.get().setActive(true);
-                    loginToCheck.get().setTimestamp(System.currentTimeMillis() + 2629800000l);
-                } else {
-                    loginToCheck.get().setActive(false);
-                    if (loginToCheck.get().getAccessLevel() == 0) {
-                        loginToCheck.get().setTimestamp(-1);
-                        for (Operator operator : loginToCheck.get().getOperators()) {
-                            Optional<Operator> operatorToCheck = operatorDAO.findOperatorByOperatorId(operator.getOperatorId());
-                            if (operatorToCheck.isPresent()) {
-                                operatorToCheck.get().getUsedTokens().clear();
-                                operatorDAO.addOperator(operatorToCheck.get());
-                            }
-                        }
-                    }
-                }
-                loginDAO.addLogin(loginToCheck.get());
-                return new ResponseEntity<>(HttpStatus.OK);
-            } else {
-                return new ResponseEntity<String>("Not found", HttpStatus.NOT_FOUND);
-            }
-        } else {
-            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
         }
+
+        Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
+        if (loginToCheck.isEmpty()) {
+            return new ResponseEntity<>("Not found", HttpStatus.NOT_FOUND);
+        }
+
+        Login login = loginToCheck.get();
+        boolean active = "Active".equals(state);
+        login.setActive(active);
+        login.setTimestamp(active ? System.currentTimeMillis() + 2629800000L : -1L);
+        if (!active && login.getAccessLevel() == 0) {
+            clearTokenHistory(login);
+        }
+        loginDAO.addLogin(login);
+        return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @GetMapping("/renamelogin")
@@ -296,34 +229,28 @@ public class LoginController {
         String password = servletRequest.getHeader("password");
         long loginId = Long.parseLong(servletRequest.getHeader("id"));
         String newName = servletRequest.getHeader("newName");
-        if (actionAllowed(userName, password)) {
-            Optional<Login> loginWithNewName = loginDAO.findLoginByUserName(newName);
-            if (!loginWithNewName.isPresent()) {
-                Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
-                if (loginToCheck.isPresent()) {
-                    loginToCheck.get().setUserName(newName);
-                    loginDAO.addLogin(loginToCheck.get());
-                    return new ResponseEntity<>(HttpStatus.OK);
-                } else {
-                    return new ResponseEntity<String>("Not found", HttpStatus.NOT_FOUND);
-                }
-            } else {
-                return new ResponseEntity<String>("Name already exists", HttpStatus.IM_USED);
-            }
-        } else {
-            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
         }
+        if (loginDAO.findLoginByUserName(newName).isPresent()) {
+            return new ResponseEntity<>("Name already exists", HttpStatus.IM_USED);
+        }
+
+        Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
+        if (loginToCheck.isEmpty()) {
+            return new ResponseEntity<>("Not found", HttpStatus.NOT_FOUND);
+        }
+        loginToCheck.get().setUserName(newName);
+        loginDAO.addLogin(loginToCheck.get());
+        return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @GetMapping("/checkal")
     public ResponseEntity<?> getAccessLevel() {
         String userName = servletRequest.getHeader("userName");
-        Optional<Login> loginToCheck = loginDAO.findLoginByUserName(userName);
-        if (loginToCheck.isPresent()) {
-            return new ResponseEntity<Integer>(loginToCheck.get().getAccessLevel(), HttpStatus.OK);
-        } else {
-            return new ResponseEntity<String>("Not found", HttpStatus.NOT_FOUND);
-        }
+        return loginDAO.findLoginByUserName(userName)
+                .<ResponseEntity<?>>map(login -> new ResponseEntity<>(login.getAccessLevel(), HttpStatus.OK))
+                .orElseGet(() -> new ResponseEntity<>("Not found", HttpStatus.NOT_FOUND));
     }
 
     @GetMapping("/changettl")
@@ -332,27 +259,23 @@ public class LoginController {
         String password = servletRequest.getHeader("password");
         long loginId = Long.parseLong(servletRequest.getHeader("id"));
         long newValue = Long.parseLong(servletRequest.getHeader("newValue"));
-        if (actionAllowed(userName, password)) {
-            Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
-            if (loginToCheck.isPresent()) {
-                loginToCheck.get().setTimestamp(System.currentTimeMillis() + (newValue * 86400000));
-                if (newValue <= 0) {
-                    loginToCheck.get().setTimestamp(-1);
-                    loginToCheck.get().setActive(false);
-                }
-//                System.out.println(System.currentTimeMillis() + (newValue * 86400000));
-//                System.out.println(newValue);
-//                System.out.println(System.currentTimeMillis());
-//                System.out.println(loginToCheck.get().getTimestamp());
-                loginDAO.addLogin(loginToCheck.get());
-
-                return new ResponseEntity<>(HttpStatus.OK);
-            } else {
-                return new ResponseEntity<String>("Login not found.", HttpStatus.NOT_FOUND);
-            }
-        } else {
-            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
         }
+
+        Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
+        if (loginToCheck.isEmpty()) {
+            return new ResponseEntity<>("Login not found.", HttpStatus.NOT_FOUND);
+        }
+
+        Login login = loginToCheck.get();
+        login.setTimestamp(System.currentTimeMillis() + (newValue * 86400000L));
+        if (newValue <= 0) {
+            login.setTimestamp(-1L);
+            login.setActive(false);
+        }
+        loginDAO.addLogin(login);
+        return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @GetMapping("/getaddedoperators")
@@ -360,23 +283,20 @@ public class LoginController {
         String userName = servletRequest.getHeader("userName");
         String password = servletRequest.getHeader("password");
         long loginId = Long.parseLong(servletRequest.getHeader("id"));
-        if (actionAllowed(userName, password)) {
-            Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
-            if (loginToCheck.isPresent()) {
-                List<Operator> allRelevantOperators = new ArrayList<>();
-                List<Operator> allOperators = (List<Operator>) operatorDAO.getAllOperators();
-                for (Operator operator : allOperators) {
-                    if (operator.getAddedTo() == -1 || operator.getAddedTo() == loginId) {
-                        allRelevantOperators.add(operator);
-                    }
-                }
-                return new ResponseEntity<List<Operator>>(allRelevantOperators, HttpStatus.OK);
-            } else {
-                return new ResponseEntity<String>("Login not found.", HttpStatus.NOT_FOUND);
-            }
-        } else {
-            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
         }
+        if (loginDAO.findLoginById(loginId).isEmpty()) {
+            return new ResponseEntity<>("Login not found.", HttpStatus.NOT_FOUND);
+        }
+
+        List<Operator> relevantOperators = new ArrayList<>();
+        for (Operator operator : operatorDAO.getAllOperators()) {
+            if (operator.getAddedTo() == -1 || operator.getAddedTo() == loginId) {
+                relevantOperators.add(operator);
+            }
+        }
+        return new ResponseEntity<>(relevantOperators, HttpStatus.OK);
     }
 
     @DeleteMapping("/delete")
@@ -384,74 +304,64 @@ public class LoginController {
         String userName = servletRequest.getHeader("userName");
         String password = servletRequest.getHeader("password");
         long loginId = Long.parseLong(servletRequest.getHeader("id"));
-        if (actionAllowed(userName, password)) {
-            Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
-            if (loginToCheck.isPresent()) {
-                loginToCheck.get().getOperators().clear();
-                for (Operator operator : operatorDAO.getAllOperators()) {
-                    if (operator.getAddedTo() == loginToCheck.get().getId()) {
-                        operator.setAddedTo(-1l);
-                        operatorDAO.addOperator(operator);
-                    }
-                }
-                loginDAO.deleteLogin(loginToCheck.get());
-                return new ResponseEntity<>(HttpStatus.OK);
-            } else {
-                return new ResponseEntity<String>("Login " + loginToCheck.get().getUserName() + " not found.", HttpStatus.NOT_FOUND);
-            }
-        } else {
-            return new ResponseEntity<String>("Access deny", HttpStatus.FORBIDDEN);
+        if (!actionAllowed(userName, password)) {
+            return new ResponseEntity<>("Access deny", HttpStatus.FORBIDDEN);
         }
+
+        Optional<Login> loginToCheck = loginDAO.findLoginById(loginId);
+        if (loginToCheck.isEmpty()) {
+            return new ResponseEntity<>("Login not found.", HttpStatus.NOT_FOUND);
+        }
+
+        for (Operator operator : operatorDAO.getAllOperators()) {
+            if (operator.getAddedTo() == loginId) {
+                operator.setAddedTo(-1L);
+                operatorDAO.addOperator(operator);
+            }
+        }
+        loginDAO.deleteLogin(loginToCheck.get());
+        return new ResponseEntity<>(HttpStatus.OK);
     }
 
     @GetMapping("/ipcheck")
     public ResponseEntity<?> ipCheck() {
-        JSONObject res = new JSONObject(responseServiceClient.getResponse("https://ip-checker2000.herokuapp.com/request/send/"));
-        return new ResponseEntity<String>(String.valueOf(res.get("remoteAddress")), HttpStatus.OK);
+        String checkerUrl = System.getenv("IP_CHECK_URL");
+        if (checkerUrl == null || checkerUrl.isBlank()) {
+            return new ResponseEntity<>("IP_CHECK_URL is not configured", HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        Object response = responseServiceClient.getResponse(checkerUrl);
+        if (response == null) {
+            return new ResponseEntity<>("IP checker is unavailable", HttpStatus.BAD_GATEWAY);
+        }
+        JSONObject res = new JSONObject(response);
+        return new ResponseEntity<>(String.valueOf(res.get("remoteAddress")), HttpStatus.OK);
     }
 
-    //    @PostMapping("/cachecheck")
-//    public void check(@RequestBody String objectString) {
-//        System.out.println(objectString);
-//        JSONObject object = new JSONObject(objectString);
-//        ConcurrentMapCacheManager cacheManager = new ConcurrentMapCacheManager();
-//        getNumber(object);
-//        JSONObject jsonObject = new JSONObject(cacheManager.getCache("objects"));
-//        System.out.println(jsonObject);
-//       System.out.println(cacheManager.getCache("objects").get("number"));
-//    }
-//
-//    @CachePut(value = "objects", key = "number")
-//    public int getNumber(JSONObject object) {
-//        System.out.println(1);
-//        System.out.println(object.get("number"));
-//        return object.getInt("number");
-//    }
-//    @PostMapping("/test")
-//    public void test(@RequestBody String objectString) {
-//        JSONObject object = new JSONObject(objectString);
-//        return PrepareResult.defineObjectType(object.get("key"));
-//        JSONObject object = new JSONObject(objectString);
-//        System.out.println(object.get("key") instanceof Double);
-//        System.out.println(String.valueOf(object.get("key").getClass()));
-//    }
-
-
     private static String encode(String password) throws NoSuchAlgorithmException, InvalidKeyException {
-
-        Mac sha256_HMAC = Mac.getInstance("HmacSHA256");
-        SecretKeySpec secret_key = new SecretKeySpec(HASHKEY.getBytes(), "HmacSHA256");
-        sha256_HMAC.init(secret_key);
-        return Base64.encodeBase64String(sha256_HMAC.doFinal(password.getBytes()));
+        String hmacKey = System.getenv("PASSWORD_HMAC_KEY");
+        if (hmacKey == null || hmacKey.isBlank()) {
+            throw new IllegalStateException("PASSWORD_HMAC_KEY must be configured");
+        }
+        Mac sha256Hmac = Mac.getInstance("HmacSHA256");
+        SecretKeySpec secretKey = new SecretKeySpec(hmacKey.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+        sha256Hmac.init(secretKey);
+        return Base64.encodeBase64String(sha256Hmac.doFinal(password.getBytes(StandardCharsets.UTF_8)));
     }
 
     private boolean actionAllowed(String userName, String password) {
         Optional<Login> loginToCheck = loginDAO.findLoginByUserName(userName);
-        return loginToCheck.map(value -> value.getPassword().equals(password)).orElse(false);
+        return loginToCheck
+                .filter(Login::isActive)
+                .map(login -> login.getPassword().equals(password))
+                .orElse(false);
     }
 
-    private static long timestampToTTL(long timestamp) {
-        return (System.currentTimeMillis() - timestamp) / 1000 / 60 / 60 / 24;
+    private void clearTokenHistory(Login login) {
+        for (Operator operator : login.getOperators()) {
+            operatorDAO.findOperatorByOperatorId(operator.getOperatorId()).ifPresent(operatorToCheck -> {
+                operatorToCheck.getUsedTokens().clear();
+                operatorDAO.addOperator(operatorToCheck);
+            });
+        }
     }
-
 }
